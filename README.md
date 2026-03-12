@@ -29,35 +29,333 @@
 
 ## 🏗️ Architecture
 
+### High-Level System Design
+
 ```
-┌──────────────────────────────────────────────────────────────┐
-│                    React Dashboard (Vite)                    │
-│  Asset Cards · Risk Gauge · Forecast Chart · History Table  │
-└────────────────────────┬─────────────────────────────────────┘
-                         │ HTTP / JSON
-┌────────────────────────▼─────────────────────────────────────┐
-│              FastAPI Backend  :8000                          │
-│  /summary · /current-analysis · /forecast · /historical      │
-│  /model-comparison · /evaluation · /assets                   │
-└──────┬──────────────┬──────────────┬────────────────┬────────┘
-       │              │              │                │
-  ┌────▼────┐   ┌─────▼─────┐  ┌───▼────┐   ┌──────▼──────┐
-  │ Z-Score │   │ Isolation │  │  LSTM  │   │   Prophet   │
-  │Baseline │   │  Forest   │  │  Auto- │   │  Residual   │
-  │(stat.)  │   │ (sklearn) │  │encoder │   │ (Facebook)  │
-  └────┬────┘   └─────┬─────┘  │(PyTorch│   └──────┬──────┘
-       │              │        └───┬────┘           │
-       └──────────────┴────────────┴────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │ Ensemble Score  │
-                    │   0 – 100       │
-                    │ Normal/Elevated │
-                    │ High/Extreme    │
-                    └─────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│                         🎨 PRESENTATION LAYER                              │
+│                     React Dashboard (Vite + TailwindCSS)                   │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────┐           │  │
+│  │  │ Overview │  │ Forecast │  │ History  │  │  Models  │           │  │
+│  │  │   Tab    │  │   Tab    │  │   Tab    │  │   Tab    │           │  │
+│  │  └──────────┘  └──────────┘  └──────────┘  └──────────┘           │  │
+│  │                                                                     │  │
+│  │  • Asset selector cards (6 assets)      • Real-time risk gauge   │  │
+│  │  • Live ensemble score dashboard         • Model score breakdown  │  │
+│  │  • ARIMA forecast visualization         • Historical event list   │  │
+│  │  • Per-model correlation matrix         • Recharts + Lucide UI  │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                        HTTP / JSON / CORS enabled
+                                     │
+                                     ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                                                                             │
+│                     🚀 API LAYER (FastAPI + Uvicorn)                      │
+│                    Running on Port 8000 with Auto-Docs                    │
+│                                                                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │  Endpoint Group 1: Asset Management                               │  │
+│  │  ├─ GET /assets                  → List all 6 supported assets    │  │
+│  │  └─ GET /summary                 → Current scores for all assets  │  │
+│  │                                                                   │  │
+│  │  Endpoint Group 2: Real-Time Analysis                            │  │
+│  │  ├─ GET /current-analysis/{asset} → Latest ensemble score        │  │
+│  │  ├─ GET /model-comparison/{asset} → Per-model stats + corr       │  │
+│  │  └─ GET /historical-anomalies/{asset} → Top 20 events           │  │
+│  │                                                                   │  │
+│  │  Endpoint Group 3: Forecasting                                   │  │
+│  │  └─ GET /forecast/{asset}?days=5-30 → ARIMA forecast w/ CI      │  │
+│  │                                                                   │  │
+│  │  Endpoint Group 4: Reporting                                     │  │
+│  │  ├─ GET /evaluation              → Full model report (JSON)      │  │
+│  │  └─ GET /docs                    → Swagger UI documentation     │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                        Data request / Model queries
+                                     │
+                    ┌─────────────────┼─────────────────┐
+                    │                 │                 │
+                    ▼                 ▼                 ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│                    🧠 INFERENCE LAYER (Model Loading)                       │
+│                                                                              │
+│  All 24 models pre-loaded in-memory for sub-millisecond inference:         │
+│                                                                              │
+│  ┌───────────────────────────────────────────────────────────────────────┐ │
+│  │                                                                       │ │
+│  │                           Per Asset (×6):                            │ │
+│  │                                                                       │ │
+│  │  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │ │
+│  │  │  Z-Score Model   │  │ Isolation Forest │  │ LSTM Autoencoder │ │ │
+│  │  │  (Stateless)     │  │  (sklearn PKL)   │  │  (PyTorch .pt)   │ │ │
+│  │  │                  │  │                  │  │                  │ │ │
+│  │  │ • 20-day window  │  │ • 200 trees      │  │ • Bottleneck: 8  │ │ │
+│  │  │ • Log-returns    │  │ • Trained on 15  │  │ • 30-day window  │ │ │
+│  │  │ • Returns score  │  │   features       │  │ • MSE-based      │ │ │
+│  │  │   instantly      │  │ • Contamination  │  │ • Apple Silicon  │ │ │
+│  │  │                  │  │   3%             │  │   MPS support    │ │ │
+│  │  └──────────────────┘  └──────────────────┘  └──────────────────┘  │ │
+│  │                                                                       │ │
+│  │  ┌──────────────────────────────────────────────────────────────┐  │ │
+│  │  │               Prophet Residual Model                         │  │ │
+│  │  │               (Facebook Prophet PKL)                         │  │ │
+│  │  │                                                              │  │ │
+│  │  │  • Trend decomposition (trend + seasonality + residual)     │  │ │
+│  │  │  • Anomaly = |actual − forecast| / (3 × residual_std)      │  │ │
+│  │  │  • Trained on pre-2020 data (structural break aware)        │  │ │
+│  │  └──────────────────────────────────────────────────────────────┘  │ │
+│  │                                                                       │ │
+│  └───────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                        4 anomaly scores (0–100 each)
+                                     │
+                    ┌─────────────────┼─────────────────┐
+                    │                 │                 │
+                    ▼                 ▼                 ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                                                                              │
+│                  🎯 ENSEMBLE LAYER (Weighted Aggregation)                  │
+│                                                                              │
+│  ┌────────────────────────────────────────────────────────────────────────┐ │
+│  │                                                                        │ │
+│  │  Ensemble Score = (15% × Z-Score)                                    │ │
+│  │                 + (25% × Isolation Forest)                           │ │
+│  │                 + (40% × LSTM Autoencoder)                           │ │
+│  │                 + (20% × Prophet Residual)                           │ │
+│  │                                                                        │ │
+│  │  Final Score Range: 0 – 100  (normalized)                            │ │
+│  │                                                                        │ │
+│  │  Risk Classification:                                                │ │
+│  │    ├─ 0–39   → 🟢 Normal         (no action needed)                 │ │
+│  │    ├─ 40–59  → 🟡 Elevated       (monitor positions)                │ │
+│  │    ├─ 60–74  → 🟠 High Risk      (review & hedge)                  │ │
+│  │    └─ 75–100 → 🔴 Extreme       (crisis-level alert)               │ │
+│  │                                                                        │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                     │
+                        Final ensemble score
+                                     │
+                    ┌─────────────────┴─────────────────┐
+                    │                                   │
+                    ▼                                   ▼
+            ┌──────────────────┐            ┌──────────────────┐
+            │ Dashboard Output │            │ API Response     │
+            │                  │            │                  │
+            │ • Live gauge     │            │ • JSON endpoint  │
+            │ • Score display  │            │ • Risk label     │
+            │ • Risk coloring  │            │ • Model details  │
+            │ • Chart updates  │            │ • Timestamp      │
+            └──────────────────┘            └──────────────────┘
 ```
 
-**Weights:** Z-Score 15% · Isolation Forest 25% · LSTM 40% · Prophet 20%
+### Data Flow Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                           📥 DATA INGESTION LAYER                            │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ yfinance Data Download                                                  │ │
+│  │ (6 assets: SP500, VIX, BTC, GOLD, NASDAQ, TESLA)                       │ │
+│  │ Historical: 2010 → 2026 (~4,000 trading days each)                      │ │
+│  │ Data format: OHLCV (Open, High, Low, Close, Volume)                    │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                          │                                   │
+│                                          ▼                                   │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ Crash Labels (13 marked events)                                         │ │
+│  │ • Flash Crash 2010 · China Black Monday 2015                            │ │
+│  │ • COVID Peak 2020 · Volmageddon 2018 · SVB 2023                         │ │
+│  │ • Yen Carry Unwind 2024 · Luna Collapse 2022 · etc.                    │ │
+│  │ With metadata: impact_scale, assets_affected                            │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                          │                                   │
+└──────────────────────────────────────────┼───────────────────────────────────┘
+                                           │
+                                           ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                      🔧 FEATURE ENGINEERING LAYER                            │
+│                                                                              │
+│  Pipeline: Raw OHLCV → 15 Engineered Features                              │
+│                                                                              │
+│  ┌─────────────────────────────────────────────────────────────────────────┐ │
+│  │ Statistical Features         │ Technical Indicators                    │ │
+│  │ ─────────────────────────────┼────────────────────────────────────────│ │
+│  │ • log_return (daily)          │ • RSI-14 (normalized [0,1])          │ │
+│  │ • zscore_10/20/60 (rolling)   │ • Bollinger Band position            │ │
+│  │ • volatility_10/30 (annual.)  │ • MACD histogram (normalized)        │ │
+│  │ • vol_ratio (short/long)      │ • Volume Z-score (20-day)            │ │
+│  │ • drawdown (252-day max)      │ • VWAP deviation (%)                 │ │
+│  │ • bubble_score (SMA ratio)    │ • ATR ratio (norm. volatility)       │ │
+│  │                               │                                      │ │
+│  │ Output: 15-dimensional vector per trading day per asset              │ │
+│  └─────────────────────────────────────────────────────────────────────────┘ │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                           │
+                                           ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                    🏋️ MODEL TRAINING LAYER (Offline)                        │
+│                                                                              │
+│  Performed once during development, models persisted to disk               │
+│                                                                              │
+│  ┌──────────────────┬──────────────────┬──────────────────┐               │ │
+│  │  Model 1         │  Model 2         │  Model 3         │  Model 4     │ │
+│  │  Z-Score         │  Isolation       │  LSTM Auto-      │  Prophet     │ │
+│  │  (Stateless)     │  Forest          │  encoder         │  Residual    │ │
+│  │                  │  (sklearn)       │  (PyTorch)       │  (Facebook)  │ │
+│  │  Training time   │  Training time   │  Training time   │  Training    │ │
+│  │  < 1s            │  ~3–5s           │  ~8–18s          │  time ~3–5s  │ │
+│  │                  │                  │                  │              │ │
+│  │  No artifacts    │  isolation_      │  lstm_           │  prophet_    │ │
+│  │  needed          │  forest.pkl      │  autoencoder.pt  │  model.pkl   │ │
+│  │                  │                  │  + lstm_meta.pkl │              │ │
+│  └──────────────────┴──────────────────┴──────────────────┴──────────────┘ │
+│                                                                              │
+│  Total training time (all 6 assets): ~74 seconds (Apple Silicon MPS)       │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+                                           │
+                                           ▼
+┌──────────────────────────────────────────────────────────────────────────────┐
+│                   📊 MODEL PERSISTENCE LAYER (Storage)                       │
+│                                                                              │
+│  Artifacts saved per asset in backend/models/<ASSET>/:                     │
+│                                                                              │
+│  ├─ isolation_forest.pkl    [Serialized sklearn model, ~50KB]              │ │
+│  ├─ lstm_autoencoder.pt     [PyTorch model weights, ~2MB]                  │ │
+│  ├─ lstm_meta.pkl           [LSTM config + scalers, ~5KB]                  │ │
+│  ├─ prophet_model.pkl       [Prophet fitted object, ~300KB]                │ │
+│  └─ scores_all.parquet      [Historical anomaly scores cache, ~1MB]        │ │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Processing Pipeline (Request → Response)
+
+```
+User Request (Frontend) 
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  FastAPI Endpoint Handler                                       │
+│  ├─ Validate asset ticker (SP500, VIX, BTC, GOLD, NASDAQ, TSLA)│
+│  ├─ Load latest market data from cache/fetch                    │
+│  └─ Route to appropriate service function                       │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ├─→ Current Analysis Request
+        │   ┌──────────────────────────────────────────────┐
+        │   │ 1. Fetch latest OHLCV for asset              │
+        │   │ 2. Compute 15 engineered features            │
+        │   │ 3. Load 4 pre-trained models                │
+        │   │ 4. Generate predictions (4 scores)          │
+        │   │ 5. Ensemble aggregate (weighted sum)        │
+        │   │ 6. Apply risk classification                │
+        │   │ 7. Return JSON response                     │
+        │   └──────────────────────────────────────────────┘
+        │   ✓ Response time: ~200–500ms
+        │
+        ├─→ Forecast Request
+        │   ┌──────────────────────────────────────────────┐
+        │   │ 1. Fetch last 252 trading days scores       │
+        │   │ 2. Fit ARIMA(2,1,2) time series model       │
+        │   │ 3. Forecast N days ahead with CI            │
+        │   │ 4. Return forecast points + bounds          │
+        │   └──────────────────────────────────────────────┘
+        │   ✓ Response time: ~1–2s
+        │
+        ├─→ Historical Anomalies Request
+        │   ┌──────────────────────────────────────────────┐
+        │   │ 1. Query scores_all.parquet (pre-computed)  │
+        │   │ 2. Filter score ≥ threshold (default 60)   │
+        │   │ 3. Cluster by 5-day windows                │
+        │   │ 4. Sort by score, return top N             │
+        │   └──────────────────────────────────────────────┘
+        │   ✓ Response time: ~50–100ms
+        │
+        └─→ Model Comparison Request
+            ┌──────────────────────────────────────────────┐
+            │ 1. Generate predictions (4 models)           │
+            │ 2. Compute per-model stats (mean/std/max)    │
+            │ 3. Calculate correlation with ensemble       │
+            │ 4. Return JSON report                        │
+            └──────────────────────────────────────────────┘
+            ✓ Response time: ~300–700ms
+
+        │
+        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  Response Formatting (JSON)                                     │
+│  ├─ asset: ticker name                                          │
+│  ├─ date: UTC timestamp                                         │
+│  ├─ ensemble_score: 0–100 float                                │
+│  ├─ risk_label: "Normal" | "Elevated" | "High Risk" | "Extreme"│
+│  ├─ model_scores: {zscore, iforest, lstm, prophet} scores     │
+│  ├─ forecast: [list of forecast points] (if applicable)        │
+│  └─ confidence_intervals: upper/lower bounds                   │
+└─────────────────────────────────────────────────────────────────┘
+        │
+        ▼
+   React Dashboard
+   (Re-render with new data)
+```
+
+### Deployment & Scaling Considerations
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    CURRENT: Local Dev Setup                  │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ Frontend (Vite Dev Server)                             │ │
+│  │ ✓ localhost:5173                                       │ │
+│  │ ✓ Hot module reload enabled                           │ │
+│  │ ✓ Development mode (unoptimized)                      │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ Backend (Uvicorn + FastAPI)                            │ │
+│  │ ✓ localhost:8000                                       │ │
+│  │ ✓ Auto-reload enabled                                 │ │
+│  │ ✓ Swagger UI at /docs                                 │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+│  ┌─────────────────────────────────────────────────────────┐ │
+│  │ Model Artifacts                                         │ │
+│  │ ✓ Stored locally in backend/models/<asset>/           │ │
+│  │ ✓ Loaded on first API request                         │ │
+│  │ ✓ Kept in-memory for fast inference                   │ │
+│  └─────────────────────────────────────────────────────────┘ │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+
+FUTURE: Production Scaling Architecture (Optional)
+
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  • Frontend: Deploy to AWS S3 + CloudFront (CDN)           │
+│  • Backend: Containerize with Docker → Deploy on K8s       │
+│  • Models: Cache in Redis / use model serving (TorchServe) │
+│  • Data: Store features in PostgreSQL / TimescaleDB        │
+│  • Alerts: WebSocket updates, email/SMS notifications      │
+│  • Monitoring: Prometheus + Grafana for live metrics       │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -298,11 +596,5 @@ Evaluated against the 13 crash events using a ±5-trading-day detection window:
 
 ---
 
-## 👤 Author
-
-**Nilesh Dwivedi**  
-GitHub: [@Nilesh-195](https://github.com/Nilesh-195)
-
----
 
 *Built as part of a 20-phase end-to-end ML project — from raw data download to live interactive dashboard.*
