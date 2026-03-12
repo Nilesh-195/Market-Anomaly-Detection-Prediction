@@ -1,0 +1,15 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+backend/data/
+backend/models/
+*.h5
+*.pkl
+
+# Node
+frontend/node_modules/
+frontend/dist/
+
+# Jupyter
+.ipynb_checkpoints/
