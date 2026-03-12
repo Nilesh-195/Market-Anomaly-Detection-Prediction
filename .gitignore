@@ -2,14 +2,32 @@
 venv/
 __pycache__/
 *.pyc
-backend/data/
-backend/models/
-*.h5
-*.pkl
-
-# Node
-frontend/node_modules/
-frontend/dist/
+*.pyo
+.Python
+*.egg-info/
+dist/
+build/
+.env
 
 # Jupyter
 .ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# Models (large binary artifacts — retrain locally)
+backend/models/*/isolation_forest.pkl
+backend/models/*/lstm_autoencoder.pt
+backend/models/*/lstm_meta.pkl
+backend/models/*/prophet_model.pkl
+
+# Data (raw/processed parquets — regenerate via data_loader.py)
+backend/data/raw/*.parquet
+backend/data/processed/*.parquet
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+
+# OS
+.DS_Store
+Thumbs.db

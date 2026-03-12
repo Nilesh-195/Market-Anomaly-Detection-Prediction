@@ -1,0 +1,314 @@
+{
+  "SP500": {
+    "zscore_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6577,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "iforest_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.8851,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "lstm_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.7825,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "prophet_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6789,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "ensemble_score": {
+      "precision": 0.0872,
+      "recall": 0.19,
+      "f1": 0.1195,
+      "roc_auc": 0.8405,
+      "hit_rate": 0.2308,
+      "crashes_detected": 3,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    }
+  },
+  "VIX": {
+    "zscore_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.65,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "iforest_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.8534,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "lstm_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.7498,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "prophet_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.7582,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "ensemble_score": {
+      "precision": 0.2338,
+      "recall": 0.18,
+      "f1": 0.2034,
+      "roc_auc": 0.8323,
+      "hit_rate": 0.4615,
+      "crashes_detected": 6,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    }
+  },
+  "BTC": {
+    "zscore_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.5206,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 11,
+      "avg_lead_days": 0.0
+    },
+    "iforest_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6714,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 11,
+      "avg_lead_days": 0.0
+    },
+    "lstm_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6053,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 11,
+      "avg_lead_days": 0.0
+    },
+    "prophet_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6257,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 11,
+      "avg_lead_days": 0.0
+    },
+    "ensemble_score": {
+      "precision": 0.0498,
+      "recall": 0.2397,
+      "f1": 0.0825,
+      "roc_auc": 0.6326,
+      "hit_rate": 0.3636,
+      "crashes_detected": 4,
+      "crashes_in_range": 11,
+      "avg_lead_days": 0.8
+    }
+  },
+  "GOLD": {
+    "zscore_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.5931,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "iforest_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.5776,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "lstm_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.532,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "prophet_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.5633,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "ensemble_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6066,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    }
+  },
+  "NASDAQ": {
+    "zscore_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6556,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "iforest_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.8902,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "lstm_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.7443,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "prophet_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6681,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    },
+    "ensemble_score": {
+      "precision": 0.0748,
+      "recall": 0.46,
+      "f1": 0.1287,
+      "roc_auc": 0.8028,
+      "hit_rate": 0.5385,
+      "crashes_detected": 7,
+      "crashes_in_range": 13,
+      "avg_lead_days": 0.0
+    }
+  },
+  "TESLA": {
+    "zscore_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6212,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 12,
+      "avg_lead_days": 0.0
+    },
+    "iforest_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.7161,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 12,
+      "avg_lead_days": 0.0
+    },
+    "lstm_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6214,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 12,
+      "avg_lead_days": 0.0
+    },
+    "prophet_score": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "roc_auc": 0.6332,
+      "hit_rate": 0.0,
+      "crashes_detected": 0,
+      "crashes_in_range": 12,
+      "avg_lead_days": 0.0
+    },
+    "ensemble_score": {
+      "precision": 0.0415,
+      "recall": 0.6667,
+      "f1": 0.0782,
+      "roc_auc": 0.7054,
+      "hit_rate": 0.6667,
+      "crashes_detected": 8,
+      "crashes_in_range": 12,
+      "avg_lead_days": 0.0
+    }
+  }
+}

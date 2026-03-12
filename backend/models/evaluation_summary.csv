@@ -1,0 +1,31 @@
+asset,model,f1,precision,recall,roc_auc,hit_rate,crashes_detected,crashes_in_range,avg_lead_days
+SP500,Z-Score,0.0,0.0,0.0,0.6577,0.0,0,13,0.0
+SP500,Isolation Forest,0.0,0.0,0.0,0.8851,0.0,0,13,0.0
+SP500,LSTM Autoencoder,0.0,0.0,0.0,0.7825,0.0,0,13,0.0
+SP500,Prophet Residual,0.0,0.0,0.0,0.6789,0.0,0,13,0.0
+SP500,Ensemble,0.1195,0.0872,0.19,0.8405,0.2308,3,13,0.0
+VIX,Z-Score,0.0,0.0,0.0,0.65,0.0,0,13,0.0
+VIX,Isolation Forest,0.0,0.0,0.0,0.8534,0.0,0,13,0.0
+VIX,LSTM Autoencoder,0.0,0.0,0.0,0.7498,0.0,0,13,0.0
+VIX,Prophet Residual,0.0,0.0,0.0,0.7582,0.0,0,13,0.0
+VIX,Ensemble,0.2034,0.2338,0.18,0.8323,0.4615,6,13,0.0
+BTC,Z-Score,0.0,0.0,0.0,0.5206,0.0,0,11,0.0
+BTC,Isolation Forest,0.0,0.0,0.0,0.6714,0.0,0,11,0.0
+BTC,LSTM Autoencoder,0.0,0.0,0.0,0.6053,0.0,0,11,0.0
+BTC,Prophet Residual,0.0,0.0,0.0,0.6257,0.0,0,11,0.0
+BTC,Ensemble,0.0825,0.0498,0.2397,0.6326,0.3636,4,11,0.8
+GOLD,Z-Score,0.0,0.0,0.0,0.5931,0.0,0,13,0.0
+GOLD,Isolation Forest,0.0,0.0,0.0,0.5776,0.0,0,13,0.0
+GOLD,LSTM Autoencoder,0.0,0.0,0.0,0.532,0.0,0,13,0.0
+GOLD,Prophet Residual,0.0,0.0,0.0,0.5633,0.0,0,13,0.0
+GOLD,Ensemble,0.0,0.0,0.0,0.6066,0.0,0,13,0.0
+NASDAQ,Z-Score,0.0,0.0,0.0,0.6556,0.0,0,13,0.0
+NASDAQ,Isolation Forest,0.0,0.0,0.0,0.8902,0.0,0,13,0.0
+NASDAQ,LSTM Autoencoder,0.0,0.0,0.0,0.7443,0.0,0,13,0.0
+NASDAQ,Prophet Residual,0.0,0.0,0.0,0.6681,0.0,0,13,0.0
+NASDAQ,Ensemble,0.1287,0.0748,0.46,0.8028,0.5385,7,13,0.0
+TESLA,Z-Score,0.0,0.0,0.0,0.6212,0.0,0,12,0.0
+TESLA,Isolation Forest,0.0,0.0,0.0,0.7161,0.0,0,12,0.0
+TESLA,LSTM Autoencoder,0.0,0.0,0.0,0.6214,0.0,0,12,0.0
+TESLA,Prophet Residual,0.0,0.0,0.0,0.6332,0.0,0,12,0.0
+TESLA,Ensemble,0.0782,0.0415,0.6667,0.7054,0.6667,8,12,0.0
