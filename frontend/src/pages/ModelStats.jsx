@@ -7,22 +7,41 @@ import { formatScore } from '../utils/formatters'
 import { COLOURS } from '../constants/colours'
 import clsx from 'clsx'
 
-const TABS = ['Ensemble', 'Z-Score', 'Isolation Forest', 'LSTM', 'Prophet']
-const CRASH_EVENTS = [
-  { name: 'Flash Crash',          date: '2010-05-06' },
-  { name: 'US Debt Downgrade',    date: '2011-08-08' },
-  { name: 'China Black Monday',   date: '2015-08-24' },
-  { name: 'Volmageddon',          date: '2018-02-05' },
-  { name: 'Christmas Crash',      date: '2018-12-24' },
-  { name: 'COVID First Wave',     date: '2020-02-24' },
-  { name: 'COVID Peak Crash',     date: '2020-03-16' },
-  { name: 'GameStop Squeeze',     date: '2021-01-28' },
-  { name: 'Fed Tightening Panic', date: '2022-01-24' },
-  { name: 'Luna/Terra Collapse',  date: '2022-05-12' },
-  { name: 'UK Gilt Crisis',       date: '2022-09-28' },
-  { name: 'SVB Bank Collapse',    date: '2023-03-10' },
-  { name: 'Yen Carry Unwind',     date: '2024-08-05' },
-]
+// evaluation shape: { SP500: { zscore_score: {precision,recall,f1,roc_auc,hit_rate,...}, ... }, ... }
+
+const TABS       = ['All Models', 'Z-Score', 'Isolation Forest', 'LSTM', 'Prophet']
+const MODEL_KEYS = ['zscore_score', 'iforest_score', 'lstm_score', 'prophet_score']
+const MODEL_META = {
+  zscore_score:  { label: 'Z-Score',           variant: 'blue'   },
+  iforest_score: { label: 'Isolation Forest',  variant: 'purple' },
+  lstm_score:    { label: 'LSTM Autoencoder',  variant: 'cyan'   },
+  prophet_score: { label: 'Prophet',           variant: 'green'  },
+}
+
+// Average a metric across all assets for a given model key
+function avgForModel(evaluation, modelKey, metric) {
+  if (!evaluation) return null
+  const vals = Object.values(evaluation)
+    .map(asset => asset?.[modelKey]?.[metric])
+    .filter(v => v != null)
+  return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null
+}
+
+// Average across all models and all assets
+function avgAll(evaluation, metric) {
+  if (!evaluation) return null
+  const vals = []
+  for (const asset of Object.values(evaluation)) {
+    for (const model of Object.values(asset)) {
+      if (model?.[metric] != null) vals.push(model[metric])
+    }
+  }
+  return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null
+}
+
+function fmt(v, decimals = 3) {
+  return v == null ? '—' : v.toFixed(decimals)
+}
 
 function FeatureBar({ name, importance, color }) {
   return (
@@ -45,28 +64,44 @@ function FeatureBar({ name, importance, color }) {
 }
 
 const FEATURES = [
-  { name: 'zscore_20',      importance: 0.18, color: COLOURS.chartBlue   },
-  { name: 'vol_30',         importance: 0.15, color: COLOURS.chartGreen  },
-  { name: 'drawdown',       importance: 0.13, color: COLOURS.chartGreen  },
-  { name: 'log_return',     importance: 0.11, color: COLOURS.chartBlue   },
-  { name: 'rsi_14',         importance: 0.09, color: COLOURS.chartPurple },
-  { name: 'bb_position',    importance: 0.08, color: COLOURS.chartPurple },
-  { name: 'vol_ratio',      importance: 0.08, color: COLOURS.chartGreen  },
-  { name: 'volume_zscore',  importance: 0.07, color: COLOURS.riskHigh    },
-  { name: 'macd_hist',      importance: 0.06, color: COLOURS.chartPurple },
-  { name: 'atr_ratio',      importance: 0.05, color: COLOURS.chartGreen  },
+  { name: 'zscore_20',     importance: 0.18, color: COLOURS.chartBlue   },
+  { name: 'vol_30',        importance: 0.15, color: COLOURS.chartGreen  },
+  { name: 'drawdown',      importance: 0.13, color: COLOURS.chartGreen  },
+  { name: 'log_return',    importance: 0.11, color: COLOURS.chartBlue   },
+  { name: 'rsi_14',        importance: 0.09, color: COLOURS.chartPurple },
+  { name: 'bb_position',   importance: 0.08, color: COLOURS.chartPurple },
+  { name: 'vol_ratio',     importance: 0.08, color: COLOURS.chartGreen  },
+  { name: 'volume_zscore', importance: 0.07, color: COLOURS.riskHigh    },
+  { name: 'macd_hist',     importance: 0.06, color: COLOURS.chartPurple },
+  { name: 'atr_ratio',     importance: 0.05, color: COLOURS.chartGreen  },
 ]
 
 export default function ModelStats({ evaluation, loading }) {
-  const [activeTab, setActiveTab] = useState('Ensemble')
-
+  const [activeTab, setActiveTab] = useState('All Models')
   const assets = evaluation ? Object.keys(evaluation) : []
-  const getMetric = (metric) => {
-    if (!evaluation) return '—'
-    const vals = assets.map(a => evaluation[a]?.[metric]).filter(v => v != null)
-    if (!vals.length) return '—'
-    return formatScore(vals.reduce((s, v) => s + v, 0) / vals.length)
-  }
+
+  // Active model key based on tab
+  const tabModelKey = {
+    'Z-Score':          'zscore_score',
+    'Isolation Forest': 'iforest_score',
+    'LSTM':             'lstm_score',
+    'Prophet':          'prophet_score',
+  }[activeTab] ?? null  // null = All Models
+
+  // KPI values: average across all assets for selected model (or all models)
+  const kpiMetrics = tabModelKey
+    ? {
+        precision: avgForModel(evaluation, tabModelKey, 'precision'),
+        recall:    avgForModel(evaluation, tabModelKey, 'recall'),
+        f1:        avgForModel(evaluation, tabModelKey, 'f1'),
+        auc:       avgForModel(evaluation, tabModelKey, 'roc_auc'),
+      }
+    : {
+        precision: avgAll(evaluation, 'precision'),
+        recall:    avgAll(evaluation, 'recall'),
+        f1:        avgAll(evaluation, 'f1'),
+        auc:       avgAll(evaluation, 'roc_auc'),
+      }
 
   return (
     <div className="space-y-4">
@@ -99,7 +134,7 @@ export default function ModelStats({ evaluation, loading }) {
           { label: 'Avg Precision', key: 'precision', color: COLOURS.chartBlue   },
           { label: 'Avg Recall',    key: 'recall',    color: COLOURS.chartPurple },
           { label: 'Avg F1 Score',  key: 'f1',        color: COLOURS.chartCyan   },
-          { label: 'Avg AUC',       key: 'auc_score', color: COLOURS.riskNormal  },
+          { label: 'Avg AUC (ROC)', key: 'auc',       color: COLOURS.riskNormal  },
         ].map((m, i) => (
           <motion.div
             key={m.key}
@@ -110,9 +145,11 @@ export default function ModelStats({ evaluation, loading }) {
             <Card hover>
               <div className="text-[#64748B] text-[11px] uppercase tracking-wider mb-2">{m.label}</div>
               <div className="font-mono font-bold text-2xl" style={{ color: m.color }}>
-                {loading ? '—' : getMetric(m.key)}
+                {loading ? '—' : fmt(kpiMetrics[m.key])}
               </div>
-              <div className="text-[#334155] text-xs mt-1">across {assets.length} assets</div>
+              <div className="text-[#334155] text-xs mt-1">
+                {tabModelKey ? MODEL_META[tabModelKey]?.label : `${assets.length} assets`}
+              </div>
             </Card>
           </motion.div>
         ))}
@@ -128,15 +165,15 @@ export default function ModelStats({ evaluation, loading }) {
         }
       </Card>
 
-      {/* Per-asset table + feature importance */}
+      {/* Per-asset early warning table + feature importance */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <Card>
-          <div className="text-[#F1F5F9] font-medium mb-1">Early Warning Analysis</div>
-          <div className="text-[#64748B] text-xs mb-4">Crash detection results by asset</div>
+          <div className="text-[#F1F5F9] font-medium mb-1">Early Warning by Asset & Model</div>
+          <div className="text-[#64748B] text-xs mb-4">Hit rate = crashes detected before event</div>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-card-border">
-                {['Asset', 'AUC', 'Hit Rate', 'Detected'].map(h => (
+                {['Asset', 'Model', 'AUC', 'Hit Rate', 'Detected'].map(h => (
                   <th key={h} className="text-left text-[#64748B] text-[11px] uppercase tracking-wider pb-2 px-2">
                     {h}
                   </th>
@@ -145,35 +182,44 @@ export default function ModelStats({ evaluation, loading }) {
             </thead>
             <tbody>
               {loading
-                ? Array.from({ length: 6 }).map((_, i) => (
+                ? Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i} className="border-b border-card-border/50">
-                      {Array.from({ length: 4 }).map((_, j) => (
-                        <td key={j} className="py-2.5 px-2">
-                          <div className="h-3 w-16 bg-surface rounded animate-pulse" />
+                      {Array.from({ length: 5 }).map((_, j) => (
+                        <td key={j} className="py-2 px-2">
+                          <div className="h-3 w-12 bg-surface rounded animate-pulse" />
                         </td>
                       ))}
                     </tr>
                   ))
-                : assets.map(asset => {
-                    const d = evaluation[asset]
-                    const hit = d?.hit_rate ?? 0
-                    const auc = d?.auc_score ?? 0
-                    const hitVariant = hit > 0.5 ? 'green' : hit > 0.25 ? 'yellow' : 'red'
-                    return (
-                      <tr key={asset} className="border-b border-card-border/50 hover:bg-surface transition-colors">
-                        <td className="py-2.5 px-2 font-mono font-medium text-xs text-[#F1F5F9]">{asset}</td>
-                        <td className="py-2.5 px-2 font-mono text-xs" style={{ color: auc > 0.75 ? COLOURS.riskNormal : COLOURS.riskElevated }}>
-                          {auc.toFixed(3)}
-                        </td>
-                        <td className="py-2.5 px-2">
-                          <Badge variant={hitVariant}>{(hit * 100).toFixed(0)}%</Badge>
-                        </td>
-                        <td className="py-2.5 px-2 text-[#64748B] text-xs font-mono">
-                          {d?.detected ?? '—'}/{d?.total ?? '—'}
-                        </td>
-                      </tr>
-                    )
-                  })
+                : assets.flatMap(asset =>
+                    MODEL_KEYS.map(mk => {
+                      const d        = evaluation?.[asset]?.[mk]
+                      if (!d) return null
+                      const hit      = d.hit_rate ?? 0
+                      const auc      = d.roc_auc  ?? 0
+                      const detected = d.crashes_detected ?? 0
+                      const total    = d.crashes_in_range ?? 0
+                      const hitVariant = hit > 0.5 ? 'green' : hit > 0.25 ? 'yellow' : 'red'
+                      return (
+                        <tr key={`${asset}-${mk}`} className="border-b border-card-border/50 hover:bg-surface transition-colors">
+                          <td className="py-1.5 px-2 font-mono text-xs text-[#F1F5F9]">{asset}</td>
+                          <td className="py-1.5 px-2">
+                            <Badge variant={MODEL_META[mk].variant}>{MODEL_META[mk].label}</Badge>
+                          </td>
+                          <td className="py-1.5 px-2 font-mono text-xs"
+                              style={{ color: auc > 0.75 ? COLOURS.riskNormal : COLOURS.riskElevated }}>
+                            {fmt(auc)}
+                          </td>
+                          <td className="py-1.5 px-2">
+                            <Badge variant={hitVariant}>{(hit * 100).toFixed(0)}%</Badge>
+                          </td>
+                          <td className="py-1.5 px-2 text-[#64748B] text-xs font-mono">
+                            {detected}/{total}
+                          </td>
+                        </tr>
+                      )
+                    }).filter(Boolean)
+                  )
               }
             </tbody>
           </table>

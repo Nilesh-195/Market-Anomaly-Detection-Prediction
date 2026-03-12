@@ -33,6 +33,10 @@ const CustomTooltip = ({ active, payload, label }) => {
 }
 
 export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
+  // Build a set of anomaly dates for fast lookup
+  const anomalyDates = new Set(anomalyPoints.map(a => a.date))
+  // For ReferenceDots we need the actual close value from chart_data
+  const anomalyDots = data.filter(d => anomalyDates.has(d.date) && d.close != null)
   return (
     <ResponsiveContainer width="100%" height={220}>
       <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -63,7 +67,7 @@ export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
           fill="url(#priceGrad)" dot={false} activeDot={{ r: 4 }}
           animationDuration={800}
         />
-        {anomalyPoints.map((pt, i) => (
+        {anomalyDots.map((pt, i) => (
           <ReferenceDot
             key={i} x={pt.date} y={pt.close}
             r={4} fill={COLOURS.riskExtreme}

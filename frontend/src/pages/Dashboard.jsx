@@ -24,18 +24,18 @@ function sectionVariants(i = 0) {
 }
 
 export default function Dashboard({ current, historical, loading }) {
-  const score    = current?.ensemble_score ?? 0
-  const scores   = current?.model_scores   ?? {}
-  const price    = current?.price
-  const zscore   = current?.zscore
-  const vol      = current?.volatility
-  const anomCount = historical?.anomalies?.length ?? 0
+  const score     = current?.ensemble_score ?? 0
+  const scores    = current?.model_scores   ?? {}
+  const price     = current?.price
+  const zscore    = current?.zscore
+  const vol       = current?.volatility
+  const anomCount = historical?.total_anomaly_days ?? 0
 
-  // Build time series for charts
-  const chartData    = historical?.chart_data ?? []
-  const anomalyPts   = (historical?.anomalies ?? []).slice(0, 20).map(a => ({
-    date: a.date,
-    close: a.price ?? null,
+  // chart_data comes from historical_anomalies endpoint
+  const chartData  = historical?.chart_data ?? []
+  const anomalyPts = (historical?.events ?? []).slice(0, 30).map(a => ({
+    date:  a.date,
+    close: null,
   }))
 
   return (
@@ -128,11 +128,11 @@ export default function Dashboard({ current, historical, loading }) {
           <div className="flex items-center justify-between mb-4">
             <div>
               <div className="text-[#F1F5F9] font-medium">Detected Anomaly Events</div>
-              <div className="text-[#64748B] text-xs">{anomCount} events in selected period</div>
+              <div className="text-[#64748B] text-xs">{anomCount} anomaly days in history</div>
             </div>
           </div>
           <AnomalyTable
-            events={historical?.anomalies ?? []}
+            events={historical?.events ?? []}
             loading={loading}
             maxRows={8}
           />

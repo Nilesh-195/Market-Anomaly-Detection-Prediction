@@ -8,8 +8,8 @@ import AnomalyCalendar from '../components/widgets/AnomalyCalendar'
 
 export default function Historical({ historical, loading }) {
   const chartData  = historical?.chart_data  ?? []
-  const anomalies  = historical?.anomalies   ?? []
-  const anomalyPts = anomalies.slice(0, 30).map(a => ({ date: a.date, close: a.price ?? null }))
+  const anomalies  = historical?.events      ?? []
+  const anomalyPts = anomalies.slice(0, 30).map(a => ({ date: a.date, close: null }))
 
   return (
     <div className="space-y-4">

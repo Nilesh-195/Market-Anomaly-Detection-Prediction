@@ -22,38 +22,45 @@ const CustomTooltip = ({ active, payload }) => {
 }
 
 export default function ROCCurves({ evaluation }) {
-  // Build synthetic ROC points from AUC values
   if (!evaluation) return null
 
-  const models = Object.entries(evaluation).map(([asset, data]) => ({
-    asset,
-    auc: data?.auc_score,
-  }))
+  const MODEL_KEYS = ['zscore_score', 'iforest_score', 'lstm_score', 'prophet_score']
+  const MODEL_DISPLAY = {
+    zscore_score:  'Z-Score',
+    iforest_score: 'Iso Forest',
+    lstm_score:    'LSTM',
+    prophet_score: 'Prophet',
+  }
 
-  // Generate approximate ROC curve points from AUC
+  // Average AUC for each model across all assets
+  const models = MODEL_KEYS.map(mk => {
+    const aucs = Object.values(evaluation)
+      .map(asset => asset?.[mk]?.roc_auc)
+      .filter(v => v != null)
+    const auc = aucs.length ? aucs.reduce((s, v) => s + v, 0) / aucs.length : 0.5
+    return { key: mk, label: MODEL_DISPLAY[mk], auc }
+  })
+
+  // Generate approximate ROC curve from AUC
   function rocPoints(auc = 0.5) {
     const pts = []
     for (let i = 0; i <= 20; i++) {
       const fpr = i / 20
-      const tpr = auc < 0.5
-        ? fpr
-        : Math.min(1, fpr + 2 * (auc - 0.5) * Math.sqrt(fpr * (1 - fpr) + 0.01))
+      const tpr = Math.min(1, fpr + 2 * (auc - 0.5) * Math.sqrt(fpr * (1 - fpr) + 0.01))
       pts.push({ fpr, tpr })
     }
     return pts
   }
 
-  // Merge all model points
   const allPoints = rocPoints(0.5).map((_, idx) => {
     const obj = { fpr: idx / 20 }
     models.forEach(m => {
-      const pts = rocPoints(m.auc)
-      obj[m.asset] = pts[idx]?.tpr
+      obj[m.key] = rocPoints(m.auc)[idx]?.tpr
     })
     return obj
   })
 
-  const modelColors = [COLOURS.chartBlue, COLOURS.chartPurple, COLOURS.chartCyan, COLOURS.chartGreen, COLOURS.riskHigh, COLOURS.riskElevated]
+  const modelColors = [COLOURS.chartBlue, COLOURS.chartPurple, COLOURS.chartCyan, COLOURS.chartGreen]
 
   return (
     <ResponsiveContainer width="100%" height={300}>
@@ -73,15 +80,14 @@ export default function ROCCurves({ evaluation }) {
         />
         <Tooltip content={<CustomTooltip />} />
         <Legend wrapperStyle={{ fontSize: 11, color: COLOURS.textSecondary }} />
-        {/* Diagonal */}
         <ReferenceLine segment={[{x:0,y:0},{x:1,y:1}]} stroke={COLOURS.textMuted} strokeDasharray="4 4" />
         {models.map((m, i) => (
           <Line
-            key={m.asset}
-            dataKey={m.asset}
-            name={`${m.asset} (AUC ${m.auc?.toFixed(3)})`}
-            stroke={modelColors[i % modelColors.length]}
-            strokeWidth={1.5} dot={false}
+            key={m.key}
+            dataKey={m.key}
+            name={`${m.label} (AUC ${m.auc.toFixed(3)})`}
+            stroke={modelColors[i]}
+            strokeWidth={2} dot={false}
             activeDot={{ r: 4 }}
           />
         ))}

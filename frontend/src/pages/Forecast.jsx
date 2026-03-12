@@ -14,15 +14,15 @@ export default function Forecast({ forecast, historical, loading }) {
     ensemble_score: d.ensemble_score ?? null,
     forecast_score: null,
   }))
-  const foreData = forecastDays.map((d, i) => ({
+  const foreData = forecastDays.map((d) => ({
     date:           d.date,
     ensemble_score: null,
-    forecast_score: d.mean,
-    ci:             [d.lower ?? d.mean - 5, d.upper ?? d.mean + 5],
+    forecast_score: d.score,
+    ci:             [d.lower ?? d.score - 5, d.upper ?? d.score + 5],
   }))
   const combined = [...histData, ...foreData]
 
-  const maxForecast = forecastDays.reduce((m, d) => Math.max(m, d.mean ?? 0), 0)
+  const maxForecast  = forecastDays.reduce((m, d) => Math.max(m, d.score ?? 0), 0)
   const currentScore = histData[histData.length - 1]?.ensemble_score ?? 0
   const volatilityWarning = maxForecast > currentScore * 1.5 && maxForecast > 50
 
@@ -65,8 +65,8 @@ export default function Forecast({ forecast, historical, loading }) {
                 key={d.date}
                 day={i === 0 ? 'Tomorrow' : `Day +${i + 1}`}
                 date={d.date}
-                score={d.mean}
-                delta={d.mean - currentScore}
+                score={d.score}
+                delta={d.score - currentScore}
                 index={i}
               />
             ))
@@ -91,7 +91,7 @@ export default function Forecast({ forecast, historical, loading }) {
         <div className="text-[#64748B] text-xs mb-4">Per-day predicted anomaly score</div>
         <div className="space-y-3">
           {forecastDays.slice(0, 5).map((d, i) => {
-            const score = d.mean ?? 0
+            const score = d.score ?? 0
             const color = getRiskColor(score)
             return (
               <div key={d.date} className="flex items-center gap-3">
