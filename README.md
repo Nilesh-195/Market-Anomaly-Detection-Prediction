@@ -246,116 +246,36 @@
 
 ### Processing Pipeline (Request → Response)
 
-```
-User Request (Frontend) 
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  FastAPI Endpoint Handler                                       │
-│  ├─ Validate asset ticker (SP500, VIX, BTC, GOLD, NASDAQ, TSLA)│
-│  ├─ Load latest market data from cache/fetch                    │
-│  └─ Route to appropriate service function                       │
-└─────────────────────────────────────────────────────────────────┘
-        │
-        ├─→ Current Analysis Request
-        │   ┌──────────────────────────────────────────────┐
-        │   │ 1. Fetch latest OHLCV for asset              │
-        │   │ 2. Compute 15 engineered features            │
-        │   │ 3. Load 4 pre-trained models                │
-        │   │ 4. Generate predictions (4 scores)          │
-        │   │ 5. Ensemble aggregate (weighted sum)        │
-        │   │ 6. Apply risk classification                │
-        │   │ 7. Return JSON response                     │
-        │   └──────────────────────────────────────────────┘
-        │   ✓ Response time: ~200–500ms
-        │
-        ├─→ Forecast Request
-        │   ┌──────────────────────────────────────────────┐
-        │   │ 1. Fetch last 252 trading days scores       │
-        │   │ 2. Fit ARIMA(2,1,2) time series model       │
-        │   │ 3. Forecast N days ahead with CI            │
-        │   │ 4. Return forecast points + bounds          │
-        │   └──────────────────────────────────────────────┘
-        │   ✓ Response time: ~1–2s
-        │
-        ├─→ Historical Anomalies Request
-        │   ┌──────────────────────────────────────────────┐
-        │   │ 1. Query scores_all.parquet (pre-computed)  │
-        │   │ 2. Filter score ≥ threshold (default 60)   │
-        │   │ 3. Cluster by 5-day windows                │
-        │   │ 4. Sort by score, return top N             │
-        │   └──────────────────────────────────────────────┘
-        │   ✓ Response time: ~50–100ms
-        │
-        └─→ Model Comparison Request
-            ┌──────────────────────────────────────────────┐
-            │ 1. Generate predictions (4 models)           │
-            │ 2. Compute per-model stats (mean/std/max)    │
-            │ 3. Calculate correlation with ensemble       │
-            │ 4. Return JSON report                        │
-            └──────────────────────────────────────────────┘
-            ✓ Response time: ~300–700ms
+| Endpoint | Input | Process | Output | Latency |
+|----------|-------|---------|--------|---------|
+| **`/current-analysis/{asset}`** | Asset ticker | Fetch OHLCV → 15 features → 4 models → ensemble | `{ensemble_score, risk_label, model_scores}` | ~300ms |
+| **`/forecast/{asset}?days=N`** | Asset, N days | Last 252 days scores → ARIMA(2,1,2) → predict N steps | `{forecast_points[], confidence_interval}` | ~1–2s |
+| **`/historical-anomalies/{asset}`** | Asset, threshold | Query cached scores → filter ≥60 → cluster (5-day) → top 20 | `{date[], score[], event_name[]}` | ~100ms |
+| **`/model-comparison/{asset}`** | Asset | Generate 4 predictions → compute stats → correlation matrix | `{model_stats[], correlation_matrix}` | ~500ms |
 
-        │
-        ▼
-┌─────────────────────────────────────────────────────────────────┐
-│  Response Formatting (JSON)                                     │
-│  ├─ asset: ticker name                                          │
-│  ├─ date: UTC timestamp                                         │
-│  ├─ ensemble_score: 0–100 float                                │
-│  ├─ risk_label: "Normal" | "Elevated" | "High Risk" | "Extreme"│
-│  ├─ model_scores: {zscore, iforest, lstm, prophet} scores     │
-│  ├─ forecast: [list of forecast points] (if applicable)        │
-│  └─ confidence_intervals: upper/lower bounds                   │
-└─────────────────────────────────────────────────────────────────┘
-        │
-        ▼
-   React Dashboard
-   (Re-render with new data)
+**Response Format (JSON):**
+```json
+{
+  "asset": "SP500",
+  "date": "2026-03-11T18:30:00Z",
+  "ensemble_score": 33.03,
+  "risk_label": "Normal",
+  "model_scores": { "zscore": 0.85, "iforest": 16.27, "lstm": 22.09, "prophet": 100.0 }
+}
 ```
 
-### Deployment & Scaling Considerations
+### Deployment & Environment
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                    CURRENT: Local Dev Setup                  │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │ Frontend (Vite Dev Server)                             │ │
-│  │ ✓ localhost:5173                                       │ │
-│  │ ✓ Hot module reload enabled                           │ │
-│  │ ✓ Development mode (unoptimized)                      │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │ Backend (Uvicorn + FastAPI)                            │ │
-│  │ ✓ localhost:8000                                       │ │
-│  │ ✓ Auto-reload enabled                                 │ │
-│  │ ✓ Swagger UI at /docs                                 │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-│  ┌─────────────────────────────────────────────────────────┐ │
-│  │ Model Artifacts                                         │ │
-│  │ ✓ Stored locally in backend/models/<asset>/           │ │
-│  │ ✓ Loaded on first API request                         │ │
-│  │ ✓ Kept in-memory for fast inference                   │ │
-│  └─────────────────────────────────────────────────────────┘ │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
+| Environment | Frontend | Backend | Models | Status |
+|---|---|---|---|---|
+| **Development** | Vite (localhost:5173) | Uvicorn (localhost:8000) | In-memory cache | ✅ Active |
+| **Production** | AWS S3 + CloudFront | Docker + K8s (load balanced) | Redis cache + TorchServe | 🔧 Optional |
 
-FUTURE: Production Scaling Architecture (Optional)
-
-┌──────────────────────────────────────────────────────────────┐
-│                                                              │
-│  • Frontend: Deploy to AWS S3 + CloudFront (CDN)           │
-│  • Backend: Containerize with Docker → Deploy on K8s       │
-│  • Models: Cache in Redis / use model serving (TorchServe) │
-│  • Data: Store features in PostgreSQL / TimescaleDB        │
-│  • Alerts: WebSocket updates, email/SMS notifications      │
-│  • Monitoring: Prometheus + Grafana for live metrics       │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
+**Current Setup:**
+- ✅ Frontend: Vite dev server with hot reload
+- ✅ Backend: FastAPI + Uvicorn with auto-reload
+- ✅ Models: All 24 models loaded in-memory on first request
+- ✅ Swagger UI: Auto-generated API docs at `/docs`
 
 ---
 
