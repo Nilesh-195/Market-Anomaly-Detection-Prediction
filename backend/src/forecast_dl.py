@@ -289,15 +289,21 @@ def xgboost_forecast(asset, horizon=30):
             for i in range(len(point))
         ]
 
+        # Convert importance dict to JSON-serializable format
+        importance_dict = {}
+        if importance:
+            for k, v in importance.items():
+                importance_dict[str(k)] = float(v) if hasattr(v, 'item') else float(v)
+
         return {
             "asset": asset,
             "date": str(df.index[-1].date()),
             "method": "xgboost",
-            "forecast": point.tolist()[:horizon],
-            "lower_95": lower.tolist()[:horizon],
-            "upper_95": upper.tolist()[:horizon],
+            "forecast": [float(x) for x in point.tolist()[:horizon]],
+            "lower_95": [float(x) for x in lower.tolist()[:horizon]],
+            "upper_95": [float(x) for x in upper.tolist()[:horizon]],
             "dates": dates[:horizon],
-            "feature_importance": importance or {},
+            "feature_importance": importance_dict,
             "model_info": {
                 "type": "gradient boosting (XGBoost)",
                 "n_estimators": 100,
