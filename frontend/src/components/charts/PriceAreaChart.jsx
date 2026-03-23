@@ -6,6 +6,14 @@ import { formatDate, formatPrice, formatScore } from '../../utils/formatters'
 import { getRiskColor } from '../../utils/riskHelpers'
 import { COLOURS } from '../../constants/colours'
 
+function formatAxisPrice(value) {
+  if (value == null || Number.isNaN(value)) return '$0'
+  const abs = Math.abs(value)
+  if (abs >= 1000) return `$${(value / 1000).toFixed(1)}k`
+  if (abs >= 100) return `$${value.toFixed(0)}`
+  return `$${value.toFixed(2)}`
+}
+
 const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
@@ -56,9 +64,9 @@ export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
         />
         <YAxis
           orientation="right"
-          tickFormatter={v => `$${(v/1000).toFixed(0)}k`}
+          tickFormatter={formatAxisPrice}
           tick={{ fill: COLOURS.textSecondary, fontSize: 11, fontFamily: 'monospace' }}
-          axisLine={false} tickLine={false} width={55}
+          axisLine={false} tickLine={false} width={64}
         />
         <Tooltip content={<CustomTooltip />} />
         <Area

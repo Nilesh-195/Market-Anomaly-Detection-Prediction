@@ -19,7 +19,7 @@ function DotBar({ score, color }) {
         <span
           key={i}
           className="w-2 h-2 rounded-full transition-all duration-500"
-          style={{ background: i < filled ? color : '#1A2640' }}
+          style={{ background: i < filled ? color : '#D1D5DB' }}
         />
       ))}
     </div>
@@ -32,8 +32,8 @@ export default function ModelConsensus({ current }) {
 
   return (
     <Card>
-      <div className="text-[#F1F5F9] font-medium mb-0.5">Model Consensus</div>
-      <div className="text-[#64748B] text-xs mb-4">Current detection status</div>
+      <div className="text-text-primary font-medium mb-0.5">Model Consensus</div>
+      <div className="text-text-secondary text-xs mb-4">Current detection status</div>
 
       <div className="space-y-3">
         {MODELS.map(m => {
@@ -53,15 +53,15 @@ export default function ModelConsensus({ current }) {
       </div>
 
       <div className="mt-4 pt-4 border-t border-card-border">
-        <div className="text-[#64748B] text-[11px] uppercase tracking-wider mb-2">Ensemble Score</div>
-        <div className="text-[#334155] text-xs font-mono mb-1">
+        <div className="text-text-secondary text-[11px] uppercase tracking-wider mb-2">Ensemble Score</div>
+        <div className="text-text-muted text-xs font-mono mb-1">
           15% + 25% + 40% + 20% =
         </div>
         <div
           className="font-mono font-bold text-2xl"
           style={{ color: MODEL_COLOURS.lstm }}
         >
-          {formatScore(ensemble)}<span className="text-sm text-[#64748B]">/100</span>
+          {formatScore(ensemble)}<span className="text-sm text-text-secondary">/100</span>
         </div>
       </div>
     </Card>

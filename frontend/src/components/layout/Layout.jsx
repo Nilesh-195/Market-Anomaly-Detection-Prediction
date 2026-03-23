@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import clsx from 'clsx'
 import Navbar from './Navbar'
 import Sidebar from './Sidebar'
 import { PERIODS } from '../../constants/config'
@@ -12,10 +11,9 @@ export default function Layout({
   sp500Score,
 }) {
   const [period, setPeriod] = useState(PERIODS[3]) // 1Y default
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
   return (
-    <div className="min-h-screen bg-page-bg text-[#F1F5F9]">
+    <div className="min-h-screen bg-page-bg text-text-primary">
       <Navbar
         selectedAsset={selectedAsset}
         onAssetChange={onAssetChange}

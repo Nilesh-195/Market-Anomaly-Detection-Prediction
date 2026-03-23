@@ -1,80 +1,95 @@
-import { formatDate, formatScore } from '../../utils/formatters'
+import { useMemo } from 'react'
+import { formatDate } from '../../utils/formatters'
 import { getRiskColor } from '../../utils/riskHelpers'
+import clsx from 'clsx'
 
 export default function AnomalyCalendar({ events = [] }) {
-  // Build a map of date → score
-  const scoreMap = {}
-  events.forEach(ev => {
-    const d = String(ev.date).slice(0, 10)
-    scoreMap[d] = Math.max(scoreMap[d] ?? 0, ev.ensemble_score ?? ev.score ?? 0)
-  })
+  // Group events by year and month
+  const calendarData = useMemo(() => {
+    const grouped = {}
 
-  // Generate last 2 years of dates
-  const today = new Date()
-  const start = new Date(today)
-  start.setFullYear(today.getFullYear() - 2)
+    events.forEach(ev => {
+      if (!ev.date) return
+      const date = new Date(ev.date)
+      const year = date.getFullYear()
+      const month = date.getMonth()
+      const day = date.getDate()
 
-  const days = []
-  const cur = new Date(start)
-  while (cur <= today) {
-    days.push(new Date(cur))
-    cur.setDate(cur.getDate() + 1)
-  }
+      if (!grouped[year]) grouped[year] = {}
+      if (!grouped[year][month]) grouped[year][month] = {}
+      grouped[year][month][day] = ev.ensemble_score ?? 0
+    })
 
-  // Group by month
-  const months = {}
-  days.forEach(d => {
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-    if (!months[key]) months[key] = []
-    months[key].push(d)
-  })
+    return grouped
+  }, [events])
 
-  function scoreToColor(score) {
-    if (!score) return '#1A2640'
-    if (score < 40)  return `rgba(16,185,129,${score / 100})`
-    if (score < 60)  return `rgba(245,158,11,${score / 100})`
-    if (score < 75)  return `rgba(249,115,22,${score / 100})`
-    return `rgba(239,68,68,${0.3 + score / 200})`
+  const years = Object.keys(calendarData).sort((a, b) => b - a).slice(0, 3)
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+  if (events.length === 0) {
+    return (
+      <div className="flex items-center justify-center py-10 text-text-muted">
+        No anomaly events to display
+      </div>
+    )
   }
 
   return (
-    <div className="overflow-x-auto">
-      <div className="flex gap-2 min-w-max">
-        {Object.entries(months).map(([monthKey, monthDays]) => {
-          const [year, month] = monthKey.split('-')
-          const label = new Date(+year, +month - 1).toLocaleString('en-US', { month: 'short', year: '2-digit' })
-          // Pad to start on correct weekday
-          const firstDay = monthDays[0].getDay()
-          return (
-            <div key={monthKey} className="flex flex-col gap-1">
-              <div className="text-[#334155] text-[10px] font-mono mb-1">{label}</div>
-              <div className="grid grid-cols-7 gap-[3px]">
-                {Array.from({ length: firstDay }).map((_, i) => (
-                  <div key={`pad-${i}`} className="w-[10px] h-[10px]" />
-                ))}
-                {monthDays.map(d => {
-                  const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
-                  const score = scoreMap[key]
-                  return (
-                    <div
-                      key={key}
-                      title={score ? `${formatDate(key, 'MMM dd, yyyy')}: ${formatScore(score)}` : formatDate(key, 'MMM dd')}
-                      className="w-[10px] h-[10px] rounded-[2px] cursor-pointer hover:ring-1 hover:ring-white/20 transition-all"
-                      style={{ background: scoreToColor(score) }}
-                    />
-                  )
-                })}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-      <div className="flex items-center gap-3 mt-3">
-        <span className="text-[#64748B] text-[11px]">Less</span>
-        {[0, 30, 50, 65, 85].map(s => (
-          <div key={s} className="w-3 h-3 rounded-[2px]" style={{ background: scoreToColor(s || 0) }} />
-        ))}
-        <span className="text-[#64748B] text-[11px]">More anomalous</span>
+    <div className="space-y-6">
+      {years.map(year => (
+        <div key={year}>
+          <div className="text-sm font-semibold text-text-primary mb-3">{year}</div>
+          <div className="grid grid-cols-12 gap-1">
+            {months.map((month, monthIdx) => {
+              const monthData = calendarData[year]?.[monthIdx] || {}
+              const daysInMonth = new Date(parseInt(year), monthIdx + 1, 0).getDate()
+              const hasAnomalies = Object.keys(monthData).length > 0
+
+              return (
+                <div key={monthIdx} className="flex flex-col items-center">
+                  <div className="text-[10px] text-text-muted mb-1">{month}</div>
+                  <div className="flex flex-wrap gap-0.5 w-6 justify-center">
+                    {Array.from({ length: Math.min(daysInMonth, 31) }).map((_, day) => {
+                      const score = monthData[day + 1]
+                      const hasAnomaly = score !== undefined
+                      return (
+                        <div
+                          key={day}
+                          className={clsx(
+                            'w-1 h-1 rounded-full transition-all',
+                            hasAnomaly ? '' : 'bg-surface'
+                          )}
+                          style={hasAnomaly ? { backgroundColor: getRiskColor(score) } : undefined}
+                          title={hasAnomaly ? `${year}-${String(monthIdx + 1).padStart(2, '0')}-${String(day + 1).padStart(2, '0')}: Score ${score.toFixed(1)}` : undefined}
+                        />
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+
+      {/* Legend */}
+      <div className="flex items-center justify-center gap-4 pt-4 border-t border-card-border">
+        <div className="flex items-center gap-1 text-xs text-text-muted">
+          <span className="w-2 h-2 rounded-full bg-risk-normal"></span>
+          Normal
+        </div>
+        <div className="flex items-center gap-1 text-xs text-text-muted">
+          <span className="w-2 h-2 rounded-full bg-risk-elevated"></span>
+          Elevated
+        </div>
+        <div className="flex items-center gap-1 text-xs text-text-muted">
+          <span className="w-2 h-2 rounded-full bg-risk-high"></span>
+          High
+        </div>
+        <div className="flex items-center gap-1 text-xs text-text-muted">
+          <span className="w-2 h-2 rounded-full bg-risk-extreme"></span>
+          Extreme
+        </div>
       </div>
     </div>
   )

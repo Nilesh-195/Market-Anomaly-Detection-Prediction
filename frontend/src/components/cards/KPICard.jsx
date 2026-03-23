@@ -29,15 +29,15 @@ export default function KPICard({
     >
       <Card hover>
         <div className="flex items-start justify-between mb-3">
-          <span className="text-[#64748B] text-[11px] uppercase tracking-wider font-medium">
+          <span className="text-text-secondary text-[11px] uppercase tracking-wider font-medium">
             {label}
           </span>
-          {Icon && <Icon size={15} className="text-[#334155]" />}
+          {Icon && <Icon size={15} className="text-text-muted" />}
         </div>
 
         <div
           className="font-mono font-bold text-[28px] leading-none mb-2"
-          style={{ color: valueColor || '#F1F5F9' }}
+          style={{ color: valueColor || undefined, colorScheme: 'light' }}
         >
           {value ?? '—'}
         </div>
@@ -45,11 +45,11 @@ export default function KPICard({
         {delta != null && (
           <div className={clsx(
             'flex items-center gap-1 text-xs font-mono',
-            isPos ? 'text-risk-normal' : isNeg ? 'text-risk-extreme' : 'text-[#64748B]'
+            isPos ? 'text-risk-normal' : isNeg ? 'text-risk-extreme' : 'text-text-secondary'
           )}>
             {isPos ? <TrendingUp size={12} /> : isNeg ? <TrendingDown size={12} /> : <Minus size={12} />}
             <span>{isPos ? '+' : ''}{delta}</span>
-            {deltaLabel && <span className="text-[#334155]">{deltaLabel}</span>}
+            {deltaLabel && <span className="text-text-muted">{deltaLabel}</span>}
           </div>
         )}
       </Card>

@@ -47,5 +47,5 @@ export function formatTime(date = new Date()) {
 
 export function formatVolatility(value) {
   if (value == null) return '—'
-  return `${Number(value * 100).toFixed(1)}%`
+  return `${Number(value).toFixed(1)}%`
 }

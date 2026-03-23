@@ -13,7 +13,7 @@ export default function AnomalyTable({ events = [], loading = false, maxRows = 8
         <thead>
           <tr className="border-b border-card-border">
             {['Date', 'Ensemble Score', 'Risk Level', 'Severity'].map(h => (
-              <th key={h} className="text-left text-[#64748B] text-[11px] uppercase tracking-wider pb-2 px-2 font-medium">
+              <th key={h} className="text-left text-text-secondary text-[11px] uppercase tracking-wider pb-2 px-2 font-medium">
                 {h}
               </th>
             ))}
@@ -28,7 +28,7 @@ export default function AnomalyTable({ events = [], loading = false, maxRows = 8
             ? (
               <tr>
                 <td colSpan={4}>
-                  <div className="flex flex-col items-center justify-center py-10 text-[#334155]">
+                  <div className="flex flex-col items-center justify-center py-10 text-text-muted">
                     <AlertCircle size={32} className="mb-2 opacity-40" />
                     <div className="text-sm">No anomalies detected in this period</div>
                   </div>
@@ -40,7 +40,7 @@ export default function AnomalyTable({ events = [], loading = false, maxRows = 8
                 const label = ev.risk_label ?? '—'
                 const badgeVariant = score < 40 ? 'green' : score < 60 ? 'yellow' : score < 75 ? 'orange' : 'red'
                 const barPct = Math.min(score, 100)
-                const barColor = score < 40 ? '#22c55e' : score < 60 ? '#eab308' : score < 75 ? '#f97316' : '#ef4444'
+                const barColor = score < 40 ? '#059669' : score < 60 ? '#d97706' : score < 75 ? '#ea580c' : '#dc2626'
                 return (
                   <motion.tr
                     key={i}
@@ -49,7 +49,7 @@ export default function AnomalyTable({ events = [], loading = false, maxRows = 8
                     transition={{ delay: i * 0.04 }}
                     className="border-b border-card-border/50 hover:bg-surface transition-colors"
                   >
-                    <td className="py-2.5 px-2 font-mono text-[#64748B] text-xs">
+                    <td className="py-2.5 px-2 font-mono text-text-secondary text-xs">
                       {formatDate(ev.date, 'MMM dd, yyyy')}
                     </td>
                     <td className="py-2.5 px-2 font-mono font-semibold text-sm" style={{ color: barColor }}>

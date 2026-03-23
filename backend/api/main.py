@@ -1,14 +1,30 @@
 """
-main.py — FastAPI backend for Market Anomaly Detection & Prediction
-====================================================================
-Endpoints:
-  GET  /                            → health check
-  GET  /assets                      → list of supported assets
-  GET  /current-analysis/{asset}    → latest anomaly score + breakdown
-  GET  /forecast/{asset}            → 5-day ARIMA anomaly score forecast
-  GET  /historical-anomalies/{asset}→ top historical anomaly events
-  GET  /model-comparison/{asset}    → per-model stats + correlations
-  GET  /evaluation                  → full evaluation report (all assets)
+main.py — FastAPI backend for Time Series Forecasting & Anomaly Detection
+===========================================================================
+PRIMARY: Stock Price Forecasting using classical TSFA methods
+BONUS: Market Anomaly Detection
+
+FORECASTING ENDPOINTS:
+  GET  /forecast/price/{asset}           → Price forecast (best method)
+  GET  /forecast/stationarity/{asset}    → ADF/KPSS stationarity tests
+  GET  /forecast/acf-pacf/{asset}        → ACF/PACF plots + ARIMA order suggestion
+  GET  /forecast/naive/{asset}           → All 4 naive method forecasts
+  GET  /forecast/exponential/{asset}     → Exponential smoothing methods
+  GET  /forecast/arima/{asset}           → ARIMA/SARIMA forecasts
+  GET  /forecast/compare/{asset}         → Compare all methods side-by-side
+  GET  /forecast/var                     → Multi-asset VAR forecast
+  GET  /forecast/evaluate/{asset}        → CV evaluation results
+
+ANOMALY DETECTION ENDPOINTS (Legacy):
+  GET  /anomaly/current/{asset}          → Latest anomaly score
+  GET  /anomaly/forecast/{asset}         → Anomaly score forecast
+  GET  /anomaly/historical/{asset}       → Historical anomaly events
+  GET  /anomaly/comparison/{asset}       → Per-model anomaly stats
+
+GENERAL:
+  GET  /                                 → Health check + API info
+  GET  /assets                           → List supported assets
+  GET  /summary                          → Dashboard overview (all assets)
 
 Run:
     uvicorn backend.api.main:app --reload --port 8000
@@ -19,12 +35,24 @@ import logging
 import sys
 from pathlib import Path
 
+import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT_DIR / "backend" / "src"))
 
+# Import forecasting modules (NEW - PRIMARY)
+from stationarity import analyze_stationarity, adf_test, comprehensive_stationarity_test
+from acf_pacf_analysis import analyze_acf_pacf, suggest_arima_order
+from naive_methods import run_all_naive_methods
+from exponential_smoothing import run_all_exp_smoothing
+from arima_models import arima_forecast, sarima_forecast
+from var_model import analyze_var, load_multi_asset_data
+from forecast_evaluation import evaluate_all_methods
+from features import load_all_features
+
+# Import anomaly detection (LEGACY - SECONDARY)
 from predict import (
     current_analysis,
     forecast_anomaly,
@@ -36,9 +64,20 @@ from predict import (
 log = logging.getLogger("uvicorn.error")
 
 app = FastAPI(
-    title="Market Anomaly Detection API",
-    description="Real-time market anomaly detection using Z-Score, Isolation Forest, LSTM Autoencoder, and Prophet.",
-    version="1.0.0",
+    title="Time Series Forecasting & Anomaly Detection API",
+    description=(
+        "Production-grade stock price forecasting system using classical TSFA methods:\n\n"
+        "**PRIMARY FEATURES:**\n"
+        "- Price forecasting with Naive, Exponential Smoothing, ARIMA/SARIMA, VAR\n"
+        "- Stationarity analysis (ADF/KPSS tests)\n"
+        "- ACF/PACF analysis for ARIMA order selection\n"
+        "- Cross-validation and method comparison\n"
+        "- Prediction intervals with 95% confidence bands\n\n"
+        "**BONUS FEATURES:**\n"
+        "- Market anomaly detection (Z-Score, Isolation Forest, LSTM, Prophet)\n"
+        "- Historical crash event analysis"
+    ),
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -60,17 +99,91 @@ def _check_asset(asset: str):
     return upper
 
 
-# ── Health ────────────────────────────────────────────────────────────────────
+def _format_dates(index, train_end_date=None, horizon=None):
+    """Safely format dates from forecast index."""
+    dates = []
+    for i, d in enumerate(index):
+        if hasattr(d, 'date'):
+            dates.append(str(d.date()))
+        elif hasattr(d, 'strftime'):
+            dates.append(d.strftime('%Y-%m-%d'))
+        elif train_end_date is not None:
+            # Generate future dates from train end date
+            next_date = train_end_date + pd.Timedelta(days=i + 1)
+            dates.append(str(next_date.date()))
+        else:
+            dates.append(str(d))
+    return dates
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GENERAL ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
 @app.get("/")
 def health():
-    return {"status": "ok", "message": "Market Anomaly Detection API is running."}
+    """API health check and information."""
+    return {
+        "status": "ok",
+        "message": "Time Series Forecasting & Anomaly Detection API",
+        "version": "2.0.0",
+        "primary_features": [
+            "Stock price forecasting (Naive, Exp. Smoothing, ARIMA, VAR)",
+            "Stationarity testing (ADF/KPSS)",
+            "ACF/PACF analysis",
+            "Method comparison & evaluation",
+            "Prediction intervals",
+        ],
+        "bonus_features": [
+            "Anomaly detection",
+            "Historical crash events",
+        ],
+        "supported_assets": ASSETS,
+        "endpoints": {
+            "forecasting": "/docs#/Forecasting",
+            "anomaly_detection": "/docs#/Anomaly%20Detection",
+            "general": "/docs#/General",
+        },
+    }
 
 
-# ── Assets ─────────────────────────────────────────────────────────────────────
-@app.get("/assets")
+# ══════════════════════════════════════════════════════════════════════════════
+# GENERAL ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/")
+def health():
+    """API health check and information."""
+    return {
+        "status": "ok",
+        "message": "Time Series Forecasting & Anomaly Detection API",
+        "version": "2.0.0",
+        "primary_features": [
+            "Stock price forecasting (Naive, Exp. Smoothing, ARIMA, VAR)",
+            "Stationarity testing (ADF/KPSS)",
+            "ACF/PACF analysis",
+            "Method comparison & evaluation",
+            "Prediction intervals",
+        ],
+        "bonus_features": [
+            "Anomaly detection",
+            "Historical crash events",
+        ],
+        "supported_assets": ASSETS,
+        "endpoints": {
+            "forecasting": "/docs#/Forecasting",
+            "anomaly_detection": "/docs#/Anomaly%20Detection",
+            "general": "/docs#/General",
+        },
+    }
+
+
+@app.get("/assets", tags=["General"])
 def list_assets():
+    """List all supported assets with descriptions."""
     return {
         "assets": ASSETS,
+        "count": len(ASSETS),
         "descriptions": {
             "SP500":  "S&P 500 Index (^GSPC)",
             "VIX":    "CBOE Volatility Index (^VIX)",
@@ -79,13 +192,650 @@ def list_assets():
             "NASDAQ": "NASDAQ 100 ETF (QQQ)",
             "TESLA":  "Tesla Inc. (TSLA)",
         },
+        "data_available": {
+            "price_history": "2010-01-01 to present",
+            "features": "15 engineered features per asset",
+            "forecasting_models": ["Naive", "SES", "Holt", "ARIMA", "SARIMA"],
+        },
     }
 
 
-# ── Current Analysis ───────────────────────────────────────────────────────────
-@app.get("/current-analysis/{asset}")
-def get_current_analysis(asset: str):
-    """Latest anomaly score, risk label, and per-model breakdown."""
+@app.get("/summary", tags=["General"])
+def get_summary():
+    """
+    Dashboard overview - Current status for all assets.
+
+    Returns latest price, 1-day forecast, anomaly score for each asset.
+    """
+    results = []
+    features_data = load_all_features()
+
+    for asset in ASSETS:
+        try:
+            if asset not in features_data:
+                results.append({"asset": asset, "error": "Data not found"})
+                continue
+
+            df = features_data[asset]
+            latest = df.iloc[-1]
+            current_price = float(latest["Close"])
+
+            # Quick 1-day naive forecast
+            forecast_1d = current_price  # Naive forecast
+
+            # Get anomaly score (if available)
+            try:
+                anomaly_data = current_analysis(asset)
+                anomaly_score = anomaly_data.get("ensemble_score", 0)
+                risk_label = anomaly_data.get("risk_label", "Unknown")
+            except:
+                anomaly_score = 0
+                risk_label = "N/A"
+
+            results.append({
+                "asset": asset,
+                "current_price": round(current_price, 2),
+                "forecast_1d": round(forecast_1d, 2),
+                "change_1d_pct": 0,  # Naive = no change
+                "anomaly_score": round(anomaly_score, 2),
+                "risk_label": risk_label,
+                "last_updated": str(latest.name.date()) if hasattr(latest.name, 'date') else "N/A",
+            })
+
+        except Exception as e:
+            log.error(f"Summary error for {asset}: {e}")
+            results.append({"asset": asset, "error": str(e)})
+
+    return {
+        "assets": results,
+        "count": len(results),
+        "timestamp": str(pd.Timestamp.now()),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FORECASTING ENDPOINTS (PRIMARY FEATURE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/forecast/stationarity/{asset}", tags=["Forecasting"])
+def forecast_stationarity(asset: str):
+    """
+    Stationarity analysis using ADF and KPSS tests.
+
+    Returns:
+    - ADF test results (statistic, p-value, critical values)
+    - KPSS test results
+    - Recommended differencing order (d)
+    - Interpretation
+    """
+    a = _check_asset(asset)
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+
+        # Comprehensive stationarity test
+        result = comprehensive_stationarity_test(series, a)
+
+        return {
+            "asset": a,
+            "adf_test": {
+                "statistic": float(result["adf"]["adf_statistic"]),
+                "p_value": float(result["adf"]["p_value"]),
+                "n_lags": int(result["adf"]["n_lags"]),
+                "n_obs": int(result["adf"]["n_obs"]),
+                "critical_values": {k: float(v) for k, v in result["adf"]["critical_values"].items()},
+                "is_stationary": bool(result["adf"]["is_stationary"]),
+            },
+            "kpss_test": {
+                "statistic": float(result["kpss"]["kpss_statistic"]),
+                "p_value": float(result["kpss"]["p_value"]),
+                "critical_values": {k: float(v) for k, v in result["kpss"]["critical_values"].items()},
+                "is_stationary": bool(result["kpss"]["is_stationary"]),
+            },
+            "interpretation": result["interpretation"],
+            "recommendation": result["recommendation"],
+            "needs_differencing": bool(result["needs_differencing"]),
+        }
+
+    except Exception as e:
+        log.error(f"Stationarity error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/acf-pacf/{asset}", tags=["Forecasting"])
+def forecast_acf_pacf(asset: str, max_lags: int = 40):
+    """
+    ACF/PACF analysis and ARIMA order suggestion.
+
+    Parameters:
+    - max_lags: Maximum number of lags to compute (default: 40)
+
+    Returns:
+    - ACF values with significance
+    - PACF values with significance
+    - Suggested ARIMA(p,d,q) order
+    - Alternative orders to try
+    """
+    a = _check_asset(asset)
+
+    if not 10 <= max_lags <= 100:
+        raise HTTPException(status_code=400, detail="max_lags must be between 10 and 100")
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+
+        # First difference the series
+        differenced = series.diff().dropna()
+
+        # Get ARIMA order suggestion
+        order_result = suggest_arima_order(differenced, d=1, max_p=5, max_q=5, name=a)
+
+        return {
+            "asset": a,
+            "suggested_order": {
+                "p": int(order_result["suggested_p"]),
+                "d": int(order_result["suggested_d"]),
+                "q": int(order_result["suggested_q"]),
+                "full": f"ARIMA({order_result['suggested_p']},{order_result['suggested_d']},{order_result['suggested_q']})",
+            },
+            "acf_significant_lags": [int(x) for x in order_result["acf_analysis"]["significant_lags"][:10]],
+            "pacf_significant_lags": [int(x) for x in order_result["pacf_analysis"]["significant_lags"][:10]],
+            "alternative_orders": order_result["alternatives"],
+            "interpretation": order_result["interpretation"],
+        }
+
+    except Exception as e:
+        log.error(f"ACF/PACF error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/naive/{asset}", tags=["Forecasting"])
+def forecast_naive(asset: str, horizon: int = 30):
+    """
+    Naive method forecasts (all 4 baseline methods).
+
+    Methods:
+    1. Mean: forecast = mean(training data)
+    2. Naive: forecast = last observed value
+    3. Seasonal Naive: forecast = value from same season last period
+    4. Drift: linear trend from first to last observation
+
+    Parameters:
+    - horizon: Forecast horizon in days (1-90, default: 30)
+
+    Returns forecasts with prediction intervals for all methods.
+    """
+    a = _check_asset(asset)
+
+    if not 1 <= horizon <= 90:
+        raise HTTPException(status_code=400, detail="horizon must be between 1 and 90")
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+        train = series.iloc[:-horizon] if len(series) > horizon else series
+        test = series.iloc[-horizon:] if len(series) > horizon else pd.Series([])
+
+        # Run all naive methods
+        results = run_all_naive_methods(train, test, seasonal_period=21, name=a)
+
+        # Format output
+        methods_output = {}
+        for method_name, method_result in results["methods"].items():
+            methods_output[method_name] = {
+                "forecast": method_result["forecast"].tolist(),
+                "lower_95": method_result["lower"].tolist(),
+                "upper_95": method_result["upper"].tolist(),
+                "dates": _format_dates(method_result["forecast"].index, train.index[-1]),
+            }
+
+            if "metrics" in method_result:
+                methods_output[method_name]["metrics"] = {
+                    "rmse": float(method_result["metrics"]["rmse"]),
+                    "mae": float(method_result["metrics"]["mae"]),
+                    "mape": float(method_result["metrics"]["mape"]),
+                }
+
+        return {
+            "asset": a,
+            "horizon": horizon,
+            "methods": methods_output,
+            "best_method": results["best_method"],
+            "comparison": results["comparison"].to_dict(orient="records"),
+        }
+
+    except Exception as e:
+        log.error(f"Naive forecast error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/exponential/{asset}", tags=["Forecasting"])
+def forecast_exponential(asset: str, horizon: int = 30, method: str = "auto"):
+    """
+    Exponential smoothing forecasts.
+
+    Methods:
+    - auto: Select best method by AIC
+    - ses: Simple Exponential Smoothing
+    - holt: Holt's Linear Trend
+    - damped: Damped Trend
+    - holtwinters: Holt-Winters Seasonal
+
+    Parameters:
+    - horizon: Forecast horizon in days (1-90, default: 30)
+    - method: Specific method or 'auto' (default: auto)
+
+    Returns forecast with prediction intervals and model info.
+    """
+    a = _check_asset(asset)
+
+    if not 1 <= horizon <= 90:
+        raise HTTPException(status_code=400, detail="horizon must be between 1 and 90")
+
+    valid_methods = ["auto", "ses", "holt", "damped", "holtwinters"]
+    if method not in valid_methods:
+        raise HTTPException(status_code=400, detail=f"method must be one of {valid_methods}")
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+        train = series.iloc[:-horizon] if len(series) > horizon else series
+        test = series.iloc[-horizon:] if len(series) > horizon else pd.Series([])
+
+        # Run exp smoothing
+        results = run_all_exp_smoothing(train, test, seasonal_period=21, name=a)
+
+        if method == "auto":
+            method_name = results["best_method"]
+        else:
+            method_map = {
+                "ses": "SES",
+                "holt": "Holt",
+                "damped": "Damped",
+                "holtwinters": "Holt-Winters",
+            }
+            method_name = method_map.get(method, "Holt")
+            if method_name not in results["methods"]:
+                method_name = results["best_method"]
+
+        method_result = results["methods"][method_name]
+
+        output = {
+            "asset": a,
+            "horizon": horizon,
+            "method": method_name,
+            "forecast": method_result["forecast"].tolist(),
+            "lower_95": method_result["lower"].tolist(),
+            "upper_95": method_result["upper"].tolist(),
+            "dates": _format_dates(method_result["forecast"].index, train.index[-1]),
+            "model_info": {
+                "aic": float(method_result.get("aic", 0)),
+                "bic": float(method_result.get("bic", 0)),
+                "params": method_result.get("params", {}),
+            },
+        }
+
+        if "metrics" in method_result:
+            output["metrics"] = {
+                "rmse": float(method_result["metrics"]["rmse"]),
+                "mae": float(method_result["metrics"]["mae"]),
+                "mape": float(method_result["metrics"]["mape"]),
+            }
+
+        # Include comparison if auto
+        if method == "auto":
+            output["all_methods_comparison"] = results["comparison"].to_dict(orient="records")
+
+        return output
+
+    except Exception as e:
+        log.error(f"Exp smoothing error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/arima/{asset}", tags=["Forecasting"])
+def forecast_arima_endpoint(
+    asset: str,
+    horizon: int = 30,
+    p: int = None,
+    d: int = None,
+    q: int = None,
+    seasonal: bool = False,
+):
+    """
+    ARIMA/SARIMA price forecast.
+
+    Parameters:
+    - horizon: Forecast horizon in days (1-90, default: 30)
+    - p, d, q: ARIMA orders (auto-selected if not provided)
+    - seasonal: Use SARIMA with seasonal component (default: False)
+
+    Returns price forecast with prediction intervals and diagnostics.
+    """
+    a = _check_asset(asset)
+
+    if not 1 <= horizon <= 90:
+        raise HTTPException(status_code=400, detail="horizon must be between 1 and 90")
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+        train = series.iloc[:-horizon] if len(series) > horizon else series
+
+        # Auto-select order if not provided
+        if p is None or d is None or q is None:
+            # Simple auto-selection
+            p = p or 1
+            d = d or 1
+            q = q or 1
+
+        order = (p, d, q)
+
+        # Forecast
+        if seasonal:
+            result = sarima_forecast(
+                train,
+                horizon,
+                order=order,
+                seasonal_order=(1, 0, 1, 21),
+                name=a
+            )
+        else:
+            result = arima_forecast(train, horizon, order=order, name=a)
+
+        if not result["success"]:
+            raise HTTPException(status_code=500, detail="ARIMA model fitting failed")
+
+        return {
+            "asset": a,
+            "horizon": horizon,
+            "order": order,
+            "seasonal": seasonal,
+            "forecast": result["forecast"].tolist(),
+            "lower_95": result["lower"].tolist(),
+            "upper_95": result["upper"].tolist(),
+            "dates": _format_dates(result["forecast"].index, train.index[-1], horizon),
+            "model_info": {
+                "aic": float(result["aic"]),
+                "bic": float(result["bic"]),
+                "method": result["method"],
+            },
+        }
+
+    except Exception as e:
+        log.error(f"ARIMA error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/compare/{asset}", tags=["Forecasting"])
+def forecast_compare(asset: str, horizon: int = 30):
+    """
+    Compare all forecasting methods side-by-side.
+
+    Runs: Naive, Mean, Drift, SES, Holt, ARIMA and returns
+    comparison table ranked by RMSE.
+
+    Parameters:
+    - horizon: Forecast horizon in days (1-90, default: 30)
+
+    Returns ranked comparison with metrics for all methods.
+    """
+    a = _check_asset(asset)
+
+    if not 1 <= horizon <= 90:
+        raise HTTPException(status_code=400, detail="horizon must be between 1 and 90")
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+
+        # Run comprehensive evaluation
+        eval_results = evaluate_all_methods(series, a, test_size=horizon, cv_folds=3, save_plots=False)
+
+        # Extract comparison table
+        comparison = eval_results.get("comparison", pd.DataFrame())
+
+        if comparison.empty:
+            raise HTTPException(status_code=500, detail="Evaluation failed")
+
+        return {
+            "asset": a,
+            "horizon": horizon,
+            "comparison": comparison.to_dict(orient="records"),
+            "best_method": eval_results.get("best_method", "Unknown"),
+            "best_rmse": float(eval_results.get("best_rmse", 0)),
+        }
+
+    except Exception as e:
+        log.error(f"Compare error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/price/{asset}", tags=["Forecasting"])
+def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
+    """
+    **PRIMARY ENDPOINT**: Get best price forecast for an asset.
+
+    This is the main forecasting endpoint that automatically selects
+    the best method based on CV evaluation.
+
+    Parameters:
+    - horizon: Forecast horizon in days (1-90, default: 30)
+    - method: Specific method or 'auto' to select best (default: auto)
+
+    Methods available: naive, mean, drift, ses, holt, arima
+
+    Returns:
+    - Price forecast with 95% CI
+    - Method used
+    - Forecast accuracy metrics
+    """
+    a = _check_asset(asset)
+
+    if not 1 <= horizon <= 90:
+        raise HTTPException(status_code=400, detail="horizon must be between 1 and 90")
+
+    try:
+        features_data = load_all_features()
+        if a not in features_data:
+            raise HTTPException(status_code=404, detail=f"Data for {a} not found")
+
+        series = features_data[a]["Close"]
+        train = series.iloc[:-horizon] if len(series) > horizon else series
+        test = series.iloc[-horizon:] if len(series) > horizon else pd.Series([])
+
+        # If auto, determine best method via quick comparison
+        if method == "auto":
+            # Quick comparison (no full CV to save time)
+            from naive_methods import naive_forecast
+            from exponential_smoothing import holt_forecast
+            from arima_models import arima_forecast as arima_fcst
+
+            # Try top 3 methods
+            candidates = {}
+
+            try:
+                nf = naive_forecast(train, min(10, horizon))
+                candidates["naive"] = nf
+            except:
+                pass
+
+            try:
+                hf = holt_forecast(train, min(10, horizon))
+                candidates["holt"] = hf
+            except:
+                pass
+
+            try:
+                af = arima_fcst(train, min(10, horizon), order=(1,1,1), name=a)
+                if af["success"]:
+                    candidates["arima"] = af
+            except:
+                pass
+
+            # Select best by AIC (if available) or default to ARIMA
+            best_method = "arima"
+            best_aic = float('inf')
+            for m, res in candidates.items():
+                aic = res.get("aic", float('inf'))
+                if aic < best_aic:
+                    best_aic = aic
+                    best_method = m
+
+            method = best_method
+
+        # Generate forecast with selected method
+        if method in ["naive", "mean", "drift"]:
+            result_dict = forecast_naive(a, horizon)
+            result = result_dict["methods"][method]
+            model_info = {"method": method, "category": "naive"}
+        elif method in ["ses", "holt"]:
+            result_dict = forecast_exponential(a, horizon, method=method)
+            result = {
+                "forecast": pd.Series(result_dict["forecast"]),
+                "lower": pd.Series(result_dict["lower_95"]),
+                "upper": pd.Series(result_dict["upper_95"]),
+            }
+            model_info = result_dict.get("model_info", {})
+            model_info["category"] = "exponential_smoothing"
+        else:  # arima
+            result_dict = forecast_arima_endpoint(a, horizon)
+            result = {
+                "forecast": pd.Series(result_dict["forecast"]),
+                "lower": pd.Series(result_dict["lower_95"]),
+                "upper": pd.Series(result_dict["upper_95"]),
+            }
+            model_info = result_dict.get("model_info", {})
+            model_info["category"] = "arima"
+
+        return {
+            "asset": a,
+            "current_price": float(train.iloc[-1]),
+            "horizon": horizon,
+            "method": method,
+            "model_info": model_info,
+            "forecast": {
+                "values": result["forecast"].tolist() if hasattr(result["forecast"], "tolist") else result["forecast"],
+                "lower_95": result["lower"].tolist() if hasattr(result["lower"], "tolist") else result["lower"],
+                "upper_95": result["upper"].tolist() if hasattr(result["upper"], "tolist") else result["upper"],
+                "dates": result_dict.get("dates", []),
+            },
+            "summary": {
+                "forecast_30d": float(result["forecast"].iloc[-1] if hasattr(result["forecast"], "iloc") else result["forecast"][-1]),
+                "expected_return_pct": round(((float(result["forecast"].iloc[-1] if hasattr(result["forecast"], "iloc") else result["forecast"][-1]) / float(train.iloc[-1])) - 1) * 100, 2),
+            },
+        }
+
+    except Exception as e:
+        log.error(f"Price forecast error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/var", tags=["Forecasting"])
+def forecast_var(
+    assets: str = "SP500,NASDAQ,VIX",
+    horizon: int = 30,
+):
+    """
+    Multi-asset VAR forecast with Granger causality.
+
+    Parameters:
+    - assets: Comma-separated list of assets (e.g., "SP500,NASDAQ,VIX")
+    - horizon: Forecast horizon in days (1-90, default: 30)
+
+    Returns:
+    - Joint forecast for all assets
+    - Granger causality results
+    - Lag order selected
+    """
+    asset_list = [a.strip().upper() for a in assets.split(",")]
+
+    # Validate all assets
+    for a in asset_list:
+        if a not in ASSETS:
+            raise HTTPException(status_code=404, detail=f"Asset '{a}' not supported")
+
+    if len(asset_list) < 2:
+        raise HTTPException(status_code=400, detail="VAR requires at least 2 assets")
+
+    if not 1 <= horizon <= 90:
+        raise HTTPException(status_code=400, detail="horizon must be between 1 and 90")
+
+    try:
+        # Run VAR analysis
+        var_results = analyze_var(asset_list, test_size=horizon, max_lags=10, save_plots=False)
+
+        if not var_results.get("success"):
+            raise HTTPException(status_code=500, detail="VAR analysis failed")
+
+        # Extract forecast
+        forecast_result = var_results["forecast_result"]
+        granger = var_results["granger_causality"]
+
+        # Format output
+        forecasts_by_asset = {}
+        for asset in asset_list:
+            if asset in forecast_result["forecast"].columns:
+                forecasts_by_asset[asset] = {
+                    "forecast": forecast_result["forecast"][asset].tolist(),
+                    "lower_95": forecast_result["lower"][asset].tolist(),
+                    "upper_95": forecast_result["upper"][asset].tolist(),
+                    "dates": _format_dates(forecast_result["forecast"].index),
+                }
+
+        # Granger causality (significant only)
+        significant_granger = granger[granger["Granger_Causes"]]
+
+        return {
+            "assets": asset_list,
+            "horizon": horizon,
+            "lag_order": int(var_results["var_result"]["lag_order"]),
+            "forecasts": forecasts_by_asset,
+            "granger_causality": significant_granger.to_dict(orient="records"),
+            "model_info": {
+                "aic": float(var_results["var_result"]["aic"]),
+                "n_observations": int(var_results["var_result"]["n_obs"]),
+            },
+        }
+
+    except Exception as e:
+        log.error(f"VAR error for {assets}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ANOMALY DETECTION ENDPOINTS (LEGACY / BONUS FEATURE)
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+@app.get("/anomaly/current/{asset}", tags=["Anomaly Detection"])
+def get_current_anomaly(asset: str):
+    """
+    Latest anomaly score and risk assessment.
+
+    Returns ensemble anomaly score (0-100) with risk label and
+    per-model breakdown (Z-Score, Isolation Forest, LSTM, Prophet).
+    """
     a = _check_asset(asset)
     try:
         return current_analysis(a)
@@ -94,10 +844,16 @@ def get_current_analysis(asset: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Forecast ───────────────────────────────────────────────────────────────────
-@app.get("/forecast/{asset}")
-def get_forecast(asset: str, days: int = 5):
-    """ARIMA 5-day anomaly score forecast with confidence intervals."""
+@app.get("/anomaly/forecast/{asset}", tags=["Anomaly Detection"])
+def get_anomaly_forecast(asset: str, days: int = 5):
+    """
+    ARIMA forecast of anomaly scores.
+
+    Forecasts future anomaly scores (not prices) using ARIMA.
+
+    Parameters:
+    - days: Forecast horizon (1-30, default: 5)
+    """
     a = _check_asset(asset)
     if not 1 <= days <= 30:
         raise HTTPException(status_code=400, detail="days must be between 1 and 30")
@@ -108,10 +864,18 @@ def get_forecast(asset: str, days: int = 5):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Historical Anomalies ───────────────────────────────────────────────────────
-@app.get("/historical-anomalies/{asset}")
+@app.get("/anomaly/historical/{asset}", tags=["Anomaly Detection"])
 def get_historical_anomalies(asset: str, top_n: int = 20, threshold: float = 60.0):
-    """Top historical anomaly events clustered into 5-day windows."""
+    """
+    Historical anomaly events (market crashes).
+
+    Returns top anomaly events clustered into 5-day windows,
+    matched with known crash events from crash_labels.json.
+
+    Parameters:
+    - top_n: Number of events to return (default: 20)
+    - threshold: Minimum anomaly score (default: 60.0)
+    """
     a = _check_asset(asset)
     try:
         return historical_anomalies(a, top_n=top_n, threshold=threshold)
@@ -120,10 +884,14 @@ def get_historical_anomalies(asset: str, top_n: int = 20, threshold: float = 60.
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Model Comparison ───────────────────────────────────────────────────────────
-@app.get("/model-comparison/{asset}")
-def get_model_comparison(asset: str):
-    """Per-model stats and correlation with ensemble score."""
+@app.get("/anomaly/comparison/{asset}", tags=["Anomaly Detection"])
+def get_anomaly_model_comparison(asset: str):
+    """
+    Per-model anomaly detection statistics.
+
+    Returns performance stats and correlation matrix for all 4
+    anomaly detection models (Z-Score, IForest, LSTM, Prophet).
+    """
     a = _check_asset(asset)
     try:
         return model_comparison(a)
@@ -132,26 +900,17 @@ def get_model_comparison(asset: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Evaluation Report ──────────────────────────────────────────────────────────
-@app.get("/evaluation")
-def get_evaluation():
-    """Full evaluation report (Precision/Recall/F1/AUC per model per asset)."""
+@app.get("/anomaly/evaluation", tags=["Anomaly Detection"])
+def get_anomaly_evaluation():
+    """
+    Full anomaly detection evaluation report.
+
+    Returns Precision/Recall/F1/AUC metrics for all models across
+    all assets, evaluated against 13 labeled crash events.
+    """
     report_path = ROOT_DIR / "backend" / "models" / "evaluation_report.json"
     if not report_path.exists():
         raise HTTPException(status_code=404,
                             detail="Evaluation report not found. Run evaluate.py first.")
     with open(report_path) as f:
         return json.load(f)
-
-
-# ── All Assets Summary ─────────────────────────────────────────────────────────
-@app.get("/summary")
-def get_summary():
-    """Current analysis for all assets — dashboard overview."""
-    results = []
-    for asset in ASSETS:
-        try:
-            results.append(current_analysis(asset))
-        except Exception as e:
-            results.append({"asset": asset, "error": str(e)})
-    return {"assets": results}

@@ -1,35 +1,30 @@
-import { motion } from 'framer-motion'
 import {
-  DollarSign, Activity, Waves, AlertCircle,
+  DollarSign, Activity, Waves, AlertCircle, TrendingUp, TrendingDown,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
-import { SkeletonCard, SkeletonChart } from '../components/ui/Skeleton'
 import KPICard from '../components/cards/KPICard'
-import RiskGauge from '../components/widgets/RiskGauge'
 import ModelConsensus from '../components/widgets/ModelConsensus'
-import AlertBanner from '../components/widgets/AlertBanner'
 import AnomalyTable from '../components/widgets/AnomalyTable'
 import PriceAreaChart from '../components/charts/PriceAreaChart'
 import RiskScoreChart from '../components/charts/RiskScoreChart'
 import {
-  formatPrice, formatScore, formatZScore, formatVolatility,
+  formatPrice, formatScore, formatZScore, formatVolatility, formatPct,
 } from '../utils/formatters'
 import { getRiskColor, getZScoreColor, getVolatilityColor } from '../utils/riskHelpers'
+import clsx from 'clsx'
 
-function sectionVariants(i = 0) {
-  return {
-    initial: { opacity: 0, y: 20 },
-    animate: { opacity: 1, y: 0, transition: { delay: i * 0.08, duration: 0.35 } },
-  }
-}
-
-export default function Dashboard({ current, historical, loading }) {
+export default function Dashboard({ current, historical, priceForecast, loading }) {
   const score     = current?.ensemble_score ?? 0
-  const scores    = current?.model_scores   ?? {}
   const price     = current?.price
   const zscore    = current?.zscore
   const vol       = current?.volatility
   const anomCount = historical?.total_anomaly_days ?? 0
+
+  // Price forecast data
+  const currentPrice    = priceForecast?.current_price ?? price ?? 0
+  const forecastValues  = priceForecast?.forecast?.values ?? []
+  const tomorrowPrice   = forecastValues[0] ?? currentPrice
+  const tomorrowChange  = currentPrice ? ((tomorrowPrice / currentPrice) - 1) * 100 : 0
 
   // chart_data comes from historical_anomalies endpoint
   const chartData  = historical?.chart_data ?? []
@@ -39,11 +34,14 @@ export default function Dashboard({ current, historical, loading }) {
   }))
 
   return (
-    <div className="space-y-4">
-      {/* Alert banner */}
-      <AlertBanner current={current} />
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h1 className="text-2xl font-bold text-text-primary mb-1">Market Dashboard</h1>
+        <p className="text-text-secondary text-sm">Real-time market anomaly detection and analysis</p>
+      </div>
 
-      {/* KPI row */}
+      {/* KPI Cards - Essential Metrics */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
         <KPICard
           label="Current Price" index={0} loading={loading}
@@ -62,7 +60,7 @@ export default function Dashboard({ current, historical, loading }) {
           label="Z-Score" index={2} loading={loading}
           value={zscore != null ? formatZScore(zscore) : '—'}
           valueColor={zscore != null ? getZScoreColor(zscore) : undefined}
-          icon={() => <span className="text-[#334155] text-sm">σ</span>}
+          icon={() => <span className="text-text-primary text-sm">σ</span>}
         />
         <KPICard
           label="Volatility (30d)" index={3} loading={loading}
@@ -71,65 +69,44 @@ export default function Dashboard({ current, historical, loading }) {
           icon={Waves}
         />
         <KPICard
-          label="Anomaly Count" index={4} loading={loading}
+          label="Anomalies" index={4} loading={loading}
           value={String(anomCount)}
           icon={AlertCircle}
           delta={null}
-          deltaLabel="in period"
+          deltaLabel="detected"
         />
       </div>
 
-      {/* Price chart + Gauge */}
-      <motion.div
-        variants={sectionVariants(1)} initial="initial" animate="animate"
-        className="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4"
-      >
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-[#F1F5F9] font-medium">Price Chart</div>
-              <div className="text-[#64748B] text-xs">With anomaly markers</div>
-            </div>
-          </div>
-          {loading
-            ? <div className="h-[220px] bg-surface rounded-lg animate-pulse" />
-            : <PriceAreaChart data={chartData} anomalyPoints={anomalyPts} />
-          }
-        </Card>
+      {/* Price Chart Section */}
+      <Card>
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-text-primary">Price History</h2>
+          <p className="text-text-secondary text-sm">Historical price with anomaly markers</p>
+        </div>
+        {loading
+          ? <div className="h-[300px] bg-surface rounded-lg animate-pulse" />
+          : <PriceAreaChart data={chartData} anomalyPoints={anomalyPts} />
+        }
+      </Card>
 
-        <Card className="flex flex-col items-center justify-center">
-          <div className="text-[#F1F5F9] font-medium mb-1 self-start">Risk Gauge</div>
-          <div className="text-[#64748B] text-xs mb-4 self-start">Ensemble score</div>
-          {loading
-            ? <div className="h-[200px] w-full bg-surface rounded-lg animate-pulse" />
-            : <RiskGauge score={score} />
-          }
-        </Card>
-      </motion.div>
+      {/* Risk Score Timeline */}
+      <Card>
+        <div className="mb-4">
+          <h2 className="text-lg font-semibold text-text-primary">Risk Timeline</h2>
+          <p className="text-text-secondary text-sm">Ensemble anomaly score over time</p>
+        </div>
+        {loading
+          ? <div className="h-[200px] bg-surface rounded-lg animate-pulse" />
+          : <RiskScoreChart data={chartData} />
+        }
+      </Card>
 
-      {/* Risk timeline */}
-      <motion.div variants={sectionVariants(2)} initial="initial" animate="animate">
+      {/* Anomaly Events + Model Consensus */}
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6">
         <Card>
-          <div className="text-[#F1F5F9] font-medium mb-1">Risk Score Timeline</div>
-          <div className="text-[#64748B] text-xs mb-4">Ensemble anomaly score over selected period</div>
-          {loading
-            ? <div className="h-[160px] bg-surface rounded-lg animate-pulse" />
-            : <RiskScoreChart data={chartData} />
-          }
-        </Card>
-      </motion.div>
-
-      {/* Events table + Model consensus */}
-      <motion.div
-        variants={sectionVariants(3)} initial="initial" animate="animate"
-        className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-4"
-      >
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <div>
-              <div className="text-[#F1F5F9] font-medium">Detected Anomaly Events</div>
-              <div className="text-[#64748B] text-xs">{anomCount} anomaly days in history</div>
-            </div>
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-text-primary">Anomaly Events</h2>
+            <p className="text-text-secondary text-sm">{anomCount} anomalies detected in history</p>
           </div>
           <AnomalyTable
             events={historical?.events ?? []}
@@ -138,8 +115,35 @@ export default function Dashboard({ current, historical, loading }) {
           />
         </Card>
 
-        <ModelConsensus current={current} />
-      </motion.div>
+        {/* Forecast + Model Consensus */}
+        <div className="space-y-6">
+          {/* Tomorrow's Price */}
+          <Card>
+            <div className="mb-4">
+              <h3 className="text-sm font-semibold text-text-primary uppercase tracking-wide">Tomorrow Prediction</h3>
+            </div>
+            {loading ? (
+              <div className="h-16 bg-surface rounded animate-pulse" />
+            ) : (
+              <div className="flex items-baseline gap-3">
+                <span className="font-mono font-bold text-3xl text-text-primary">
+                  {formatPrice(tomorrowPrice)}
+                </span>
+                <span className={clsx(
+                  'flex items-center gap-1 text-sm font-mono font-medium',
+                  tomorrowChange >= 0 ? 'text-risk-normal' : 'text-risk-extreme'
+                )}>
+                  {tomorrowChange >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
+                  {formatPct(tomorrowChange)}
+                </span>
+              </div>
+            )}
+          </Card>
+
+          {/* Model Consensus */}
+          <ModelConsensus current={current} />
+        </div>
+      </div>
     </div>
   )
 }

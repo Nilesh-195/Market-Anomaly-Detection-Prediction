@@ -2,28 +2,20 @@ import { useState, useCallback } from 'react'
 import Layout from './components/layout/Layout'
 import { ToastContainer } from './components/ui/Toast'
 import Dashboard from './pages/Dashboard'
-import Historical from './pages/Historical'
 import Forecast from './pages/Forecast'
-import ModelStats from './pages/ModelStats'
+import Historical from './pages/Historical'
 import { useMarketData } from './hooks/useMarketData'
 import { useAutoRefresh } from './hooks/useAutoRefresh'
-
-const PAGES = {
-  dashboard: Dashboard,
-  historical: Historical,
-  forecast: Forecast,
-  models: ModelStats,
-}
 
 let _toastId = 0
 
 export default function App() {
   const [selectedAsset, setSelectedAsset] = useState('SP500')
-  const [activePage, setActivePage]       = useState('dashboard')
-  const [toasts, setToasts]               = useState([])
+  const [activePage, setActivePage] = useState('dashboard')
+  const [toasts, setToasts] = useState([])
 
   const {
-    current, historical, forecast,
+    current, historical, forecast, priceForecast,
     comparison, evaluation, summary,
     apiOnline, loading, error,
     lastUpdated, refresh,
@@ -41,9 +33,43 @@ export default function App() {
     setToasts(prev => prev.filter(t => t.id !== id))
   }, [])
 
-  const sp500Score = summary?.find?.(s => s?.asset === 'SP500')?.ensemble_score ?? null
+  const sp500Score = summary?.assets?.find?.(s => s?.asset === 'SP500')?.anomaly_score ?? null
 
-  const PageComponent = PAGES[activePage] ?? Dashboard
+  const renderPage = () => {
+    switch (activePage) {
+      case 'forecast':
+        return (
+          <Forecast
+            priceForecast={priceForecast}
+            selectedAsset={selectedAsset}
+            loading={loading}
+            error={error}
+          />
+        )
+      case 'historical':
+        return (
+          <Historical
+            historical={historical}
+            selectedAsset={selectedAsset}
+            loading={loading}
+            error={error}
+          />
+        )
+      default:
+        return (
+          <Dashboard
+            current={current}
+            historical={historical}
+            forecast={forecast}
+            priceForecast={priceForecast}
+            evaluation={evaluation}
+            comparison={comparison}
+            loading={loading}
+            error={error}
+          />
+        )
+    }
+  }
 
   return (
     <>
@@ -58,19 +84,10 @@ export default function App() {
         lastUpdated={lastUpdated}
         sp500Score={sp500Score}
       >
-        <PageComponent
-          current={current}
-          historical={historical}
-          forecast={forecast}
-          evaluation={evaluation}
-          comparison={comparison}
-          loading={loading}
-          error={error}
-        />
+        {renderPage()}
       </Layout>
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />
     </>
   )
 }
-

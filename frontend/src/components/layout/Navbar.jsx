@@ -30,7 +30,7 @@ export default function Navbar({
   const currentAsset = ASSETS.find(a => a.ticker === selectedAsset) || ASSETS[0]
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-40 h-16 bg-card-bg border-b border-card-border flex items-center px-6 gap-6">
+    <header className="fixed top-0 left-0 right-0 z-40 h-16 bg-white border-b border-card-border flex items-center px-6 gap-6 shadow-sm">
       {/* Brand */}
       <div className="flex items-center gap-3 min-w-[200px]">
         <span className="relative flex h-2 w-2">
@@ -44,8 +44,8 @@ export default function Navbar({
           )} />
         </span>
         <div>
-          <div className="font-mono font-bold text-[#F1F5F9] text-sm tracking-wider">ANOMALY RADAR</div>
-          <div className="text-[#64748B] text-[10px] tracking-wide">Market Intelligence Platform</div>
+          <div className="font-mono font-bold text-text-primary text-sm tracking-wider">MARKET ANOMALY</div>
+          <div className="text-text-secondary text-[10px] tracking-wide">Detection & Forecasting</div>
         </div>
       </div>
 
@@ -55,12 +55,12 @@ export default function Navbar({
         <div className="relative">
           <button
             onClick={() => setAssetOpen(v => !v)}
-            className="flex items-center gap-2 bg-surface border border-card-border rounded-lg px-3 py-1.5 text-sm text-[#F1F5F9] hover:border-brand-blue/50 transition-colors min-w-[160px]"
+            className="flex items-center gap-2 bg-surface border border-card-border rounded-lg px-3 py-1.5 text-sm text-text-primary hover:border-brand-blue/50 transition-colors min-w-[160px]"
           >
             <span className="w-2 h-2 rounded-full bg-brand-blue inline-block" />
             <span className="font-mono font-medium">{currentAsset.ticker}</span>
-            <span className="text-[#64748B] text-xs">{currentAsset.name}</span>
-            <ChevronDown size={14} className="ml-auto text-[#64748B]" />
+            <span className="text-text-secondary text-xs">{currentAsset.name}</span>
+            <ChevronDown size={14} className="ml-auto text-text-secondary" />
           </button>
           <AnimatePresence>
             {assetOpen && (
@@ -68,7 +68,7 @@ export default function Navbar({
                 initial={{ opacity: 0, y: -6 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: -6 }}
-                className="absolute top-full mt-1 left-0 bg-card-bg border border-card-border rounded-xl overflow-hidden z-50 min-w-[180px]"
+                className="absolute top-full mt-1 left-0 bg-white border border-card-border rounded-xl overflow-hidden z-50 min-w-[180px] shadow-lg"
               >
                 {ASSETS.map(a => (
                   <button
@@ -76,15 +76,15 @@ export default function Navbar({
                     onClick={() => { onAssetChange(a.ticker); setAssetOpen(false) }}
                     className={clsx(
                       'w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-surface transition-colors',
-                      a.ticker === selectedAsset ? 'text-[#F1F5F9]' : 'text-[#64748B]'
+                      a.ticker === selectedAsset ? 'text-text-primary bg-blue-50' : 'text-text-secondary'
                     )}
                   >
                     <span className={clsx(
                       'w-1.5 h-1.5 rounded-full',
-                      a.ticker === selectedAsset ? 'bg-brand-blue' : 'bg-[#334155]'
+                      a.ticker === selectedAsset ? 'bg-brand-blue' : 'bg-text-muted'
                     )} />
                     <span className="font-mono font-medium">{a.ticker}</span>
-                    <span className="text-xs text-[#64748B]">{a.name}</span>
+                    <span className="text-xs text-text-secondary">{a.name}</span>
                   </button>
                 ))}
               </motion.div>
@@ -102,7 +102,7 @@ export default function Navbar({
                 'px-3 py-1 rounded-md text-xs font-mono font-medium transition-all',
                 selectedPeriod.label === p.label
                   ? 'bg-brand-blue text-white'
-                  : 'text-[#64748B] hover:text-[#F1F5F9] hover:bg-hover'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-hover'
               )}
             >
               {p.label}
@@ -117,8 +117,8 @@ export default function Navbar({
         <span className={clsx(
           'text-xs font-mono font-medium px-2.5 py-1 rounded-md border',
           isMarketOpen()
-            ? 'text-risk-normal border-risk-normal/30 bg-risk-normal/5'
-            : 'text-[#64748B] border-[#334155] bg-surface'
+            ? 'text-risk-normal border-risk-normal/30 bg-green-50'
+            : 'text-text-secondary border-card-border bg-surface'
         )}>
           {isMarketOpen() ? '● MARKET OPEN' : '○ MARKET CLOSED'}
         </span>
@@ -126,13 +126,13 @@ export default function Navbar({
         {/* Last updated */}
         {lastUpdated && (
           <div className="text-right hidden md:block">
-            <div className="text-[#334155] text-[10px]">Last updated</div>
-            <div className="text-[#64748B] text-xs font-mono">{formatDate(lastUpdated, 'HH:mm:ss')}</div>
+            <div className="text-text-muted text-[10px]">Last updated</div>
+            <div className="text-text-secondary text-xs font-mono">{formatDate(lastUpdated, 'HH:mm:ss')}</div>
           </div>
         )}
 
         {/* Clock */}
-        <div className="font-mono text-[#64748B] text-sm tabular-nums hidden lg:block">
+        <div className="font-mono text-text-secondary text-sm tabular-nums hidden lg:block">
           {formatTime(time)}
         </div>
 
@@ -140,7 +140,7 @@ export default function Navbar({
         <button
           onClick={onRefresh}
           disabled={loading}
-          className="flex items-center gap-2 px-3 py-1.5 border border-card-border rounded-lg text-xs text-[#64748B] hover:text-[#F1F5F9] hover:border-brand-blue/50 transition-all disabled:opacity-50"
+          className="flex items-center gap-2 px-3 py-1.5 border border-card-border rounded-lg text-xs text-text-secondary hover:text-text-primary hover:border-brand-blue/50 transition-all disabled:opacity-50"
         >
           <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           <span className="hidden sm:inline">Refresh</span>

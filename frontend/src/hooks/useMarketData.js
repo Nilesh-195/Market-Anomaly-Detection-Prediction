@@ -2,24 +2,26 @@ import { useState, useEffect, useCallback } from 'react'
 import {
   fetchCurrentAnalysis,
   fetchHistoricalAnomalies,
-  fetchForecast,
+  fetchAnomalyForecast,
   fetchModelComparison,
   fetchEvaluation,
   fetchSummary,
+  fetchPriceForecast,
   checkHealth,
 } from '../services/api'
 
 export function useMarketData(ticker) {
-  const [current,    setCurrent]    = useState(null)
-  const [historical, setHistorical] = useState(null)
-  const [forecast,   setForecast]   = useState(null)
-  const [comparison, setComparison] = useState(null)
-  const [evaluation, setEvaluation] = useState(null)
-  const [summary,    setSummary]    = useState(null)
-  const [apiOnline,  setApiOnline]  = useState(null)
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState(null)
-  const [lastUpdated, setLastUpdated] = useState(null)
+  const [current,       setCurrent]       = useState(null)
+  const [historical,    setHistorical]    = useState(null)
+  const [forecast,      setForecast]      = useState(null)
+  const [priceForecast, setPriceForecast] = useState(null)
+  const [comparison,    setComparison]    = useState(null)
+  const [evaluation,    setEvaluation]    = useState(null)
+  const [summary,       setSummary]       = useState(null)
+  const [apiOnline,     setApiOnline]     = useState(null)
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState(null)
+  const [lastUpdated,   setLastUpdated]   = useState(null)
 
   const load = useCallback(async () => {
     if (!ticker) return
@@ -30,21 +32,23 @@ export function useMarketData(ticker) {
       setApiOnline(online)
       if (!online) throw new Error('API offline')
 
-      const [cur, hist, fore, comp, evl, sum] = await Promise.allSettled([
+      const [cur, hist, fore, priceFore, comp, evl, sum] = await Promise.allSettled([
         fetchCurrentAnalysis(ticker),
         fetchHistoricalAnomalies(ticker, 50),
-        fetchForecast(ticker, 10),
+        fetchAnomalyForecast(ticker, 10),
+        fetchPriceForecast(ticker, 30, 'auto'),
         fetchModelComparison(ticker),
         fetchEvaluation(),
         fetchSummary(),
       ])
 
-      if (cur.status      === 'fulfilled') setCurrent(cur.value)
-      if (hist.status     === 'fulfilled') setHistorical(hist.value)
-      if (fore.status     === 'fulfilled') setForecast(fore.value)
-      if (comp.status     === 'fulfilled') setComparison(comp.value)
-      if (evl.status      === 'fulfilled') setEvaluation(evl.value)
-      if (sum.status      === 'fulfilled') setSummary(sum.value)
+      if (cur.status       === 'fulfilled') setCurrent(cur.value)
+      if (hist.status      === 'fulfilled') setHistorical(hist.value)
+      if (fore.status      === 'fulfilled') setForecast(fore.value)
+      if (priceFore.status === 'fulfilled') setPriceForecast(priceFore.value)
+      if (comp.status      === 'fulfilled') setComparison(comp.value)
+      if (evl.status       === 'fulfilled') setEvaluation(evl.value)
+      if (sum.status       === 'fulfilled') setSummary(sum.value)
 
       setLastUpdated(new Date())
     } catch (err) {
@@ -57,7 +61,7 @@ export function useMarketData(ticker) {
   useEffect(() => { load() }, [load])
 
   return {
-    current, historical, forecast, comparison, evaluation, summary,
+    current, historical, forecast, priceForecast, comparison, evaluation, summary,
     apiOnline, loading, error, lastUpdated, refresh: load,
   }
 }

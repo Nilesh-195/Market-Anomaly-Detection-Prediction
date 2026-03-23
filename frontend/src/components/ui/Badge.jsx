@@ -2,14 +2,14 @@ import clsx from 'clsx'
 
 export function Badge({ children, className = '', variant = 'default' }) {
   const variants = {
-    default:  'bg-surface text-[#64748B]',
-    blue:     'bg-[#2563EB]/10 text-[#3B82F6] border border-[#2563EB]/20',
-    green:    'bg-[#10B981]/10 text-[#10B981] border border-[#10B981]/20',
-    yellow:   'bg-[#F59E0B]/10 text-[#F59E0B] border border-[#F59E0B]/20',
-    orange:   'bg-[#F97316]/10 text-[#F97316] border border-[#F97316]/20',
-    red:      'bg-[#EF4444]/10 text-[#EF4444] border border-[#EF4444]/20',
-    purple:   'bg-[#8B5CF6]/10 text-[#8B5CF6] border border-[#8B5CF6]/20',
-    cyan:     'bg-[#06B6D4]/10 text-[#06B6D4] border border-[#06B6D4]/20',
+    default:  'bg-surface text-text-secondary',
+    blue:     'bg-blue-50 text-brand-blue border border-brand-blue/20',
+    green:    'bg-green-50 text-risk-normal border border-risk-normal/20',
+    yellow:   'bg-yellow-50 text-risk-elevated border border-risk-elevated/20',
+    orange:   'bg-orange-50 text-risk-high border border-risk-high/20',
+    red:      'bg-red-50 text-risk-extreme border border-risk-extreme/20',
+    purple:   'bg-purple-50 text-chart-purple border border-chart-purple/20',
+    cyan:     'bg-cyan-50 text-chart-cyan border border-chart-cyan/20',
   }
   return (
     <span
