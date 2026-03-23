@@ -1,5 +1,6 @@
+import { useState, useEffect } from 'react'
 import {
-  DollarSign, Activity, Waves, AlertCircle, TrendingUp, TrendingDown,
+  DollarSign, Activity, Waves, AlertCircle, TrendingUp, TrendingDown, Layers, Zap,
 } from 'lucide-react'
 import { Card } from '../components/ui/Card'
 import KPICard from '../components/cards/KPICard'
@@ -11,10 +12,32 @@ import {
   formatPrice, formatScore, formatZScore, formatVolatility, formatPct,
 } from '../utils/formatters'
 import { getRiskColor, getZScoreColor, getVolatilityColor } from '../utils/riskHelpers'
+import { useLiveScores } from '../hooks/useWebSocket'
+import { API_BASE } from '../constants/config'
 import clsx from 'clsx'
 
-export default function Dashboard({ current, historical, priceForecast, loading }) {
+const REGIME_COLORS = {
+  bull: 'bg-green-500/20 text-green-400',
+  bear: 'bg-amber-500/20 text-amber-400',
+  crisis: 'bg-red-500/20 text-red-400',
+}
+
+export default function Dashboard({ current, historical, priceForecast, loading, selectedAsset }) {
+  const [advancedData, setAdvancedData] = useState(null)
+  const { data: liveData, connected } = useLiveScores(selectedAsset ?? 'SP500')
+
+  // Fetch advanced analysis for regime and model tiers
+  useEffect(() => {
+    if (!selectedAsset) return
+    fetch(`${API_BASE}/anomaly/advanced/${selectedAsset}`)
+      .then(res => res.json())
+      .then(setAdvancedData)
+      .catch(console.error)
+  }, [selectedAsset])
+
   const score     = current?.ensemble_score ?? 0
+  const advScore  = advancedData?.advanced_ensemble ?? score
+  const regime    = advancedData?.current_regime ?? liveData?.regime ?? 'unknown'
   const price     = current?.price
   const zscore    = current?.zscore
   const vol       = current?.volatility
@@ -35,10 +58,29 @@ export default function Dashboard({ current, historical, priceForecast, loading 
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary mb-1">Market Dashboard</h1>
-        <p className="text-text-secondary text-sm">Real-time market anomaly detection and analysis</p>
+      {/* Header with Live Badge and Regime Pill */}
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold text-text-primary">Market Dashboard</h1>
+            {connected && (
+              <span className="flex items-center gap-1.5 px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded-full">
+                <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                LIVE
+              </span>
+            )}
+          </div>
+          <p className="text-text-secondary text-sm">Real-time market anomaly detection and analysis</p>
+        </div>
+        {regime !== 'unknown' && (
+          <div className={clsx(
+            'flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium',
+            REGIME_COLORS[regime] ?? 'bg-gray-500/20 text-gray-400'
+          )}>
+            <Layers size={16} />
+            <span className="uppercase">{regime} Regime</span>
+          </div>
+        )}
       </div>
 
       {/* KPI Cards - Essential Metrics */}
@@ -76,6 +118,32 @@ export default function Dashboard({ current, historical, priceForecast, loading 
           deltaLabel="detected"
         />
       </div>
+
+      {/* Model Tier Comparison Card */}
+      {advancedData && (
+        <Card>
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="w-5 h-5 text-amber-400" />
+            <h2 className="text-lg font-semibold text-text-primary">Model Tier Comparison</h2>
+          </div>
+          <div className="grid grid-cols-2 gap-6">
+            <div>
+              <p className="text-text-secondary text-sm mb-1">Baseline (4 models)</p>
+              <p className="font-mono text-3xl font-bold" style={{ color: getRiskColor(score) }}>
+                {formatScore(score)}
+              </p>
+              <p className="text-text-secondary text-xs mt-1">Z-Score, IForest, LSTM, Prophet</p>
+            </div>
+            <div>
+              <p className="text-text-secondary text-sm mb-1">Advanced (7 models)</p>
+              <p className="font-mono text-3xl font-bold" style={{ color: getRiskColor(advScore) }}>
+                {formatScore(advScore)}
+              </p>
+              <p className="text-text-secondary text-xs mt-1">+ XGBoost, HMM, TCN</p>
+            </div>
+          </div>
+        </Card>
+      )}
 
       {/* Price Chart Section */}
       <Card>

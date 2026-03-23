@@ -2,7 +2,7 @@
 main.py — FastAPI backend for Time Series Forecasting & Anomaly Detection
 ===========================================================================
 PRIMARY: Stock Price Forecasting using classical TSFA methods
-BONUS: Market Anomaly Detection
+BONUS: Market Anomaly Detection (Phase 2: 7 models with advanced ensemble)
 
 FORECASTING ENDPOINTS:
   GET  /forecast/price/{asset}           → Price forecast (best method)
@@ -15,11 +15,16 @@ FORECASTING ENDPOINTS:
   GET  /forecast/var                     → Multi-asset VAR forecast
   GET  /forecast/evaluate/{asset}        → CV evaluation results
 
-ANOMALY DETECTION ENDPOINTS (Legacy):
-  GET  /anomaly/current/{asset}          → Latest anomaly score
-  GET  /anomaly/forecast/{asset}         → Anomaly score forecast
-  GET  /anomaly/historical/{asset}       → Historical anomaly events
-  GET  /anomaly/comparison/{asset}       → Per-model anomaly stats
+ANOMALY DETECTION ENDPOINTS:
+  Baseline (4 models):
+    GET  /anomaly/current/{asset}        → Latest anomaly score (baseline)
+    GET  /anomaly/forecast/{asset}       → Anomaly score forecast
+    GET  /anomaly/historical/{asset}     → Historical anomaly events
+    GET  /anomaly/comparison/{asset}     → Per-model anomaly stats
+  Advanced (Phase 2 - 7 models):
+    GET  /anomaly/advanced/{asset}       → All 7 models + advanced ensemble
+    GET  /anomaly/regime/{asset}         → HMM market regime timeline
+    GET  /anomaly/compare-tiers/{asset}  → Baseline vs Advanced comparison
 
 GENERAL:
   GET  /                                 → Health check + API info
@@ -30,13 +35,14 @@ Run:
     uvicorn backend.api.main:app --reload --port 8000
 """
 
+import asyncio
 import json
 import logging
 import sys
 from pathlib import Path
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -51,10 +57,13 @@ from arima_models import arima_forecast, sarima_forecast
 from var_model import analyze_var, load_multi_asset_data
 from forecast_evaluation import evaluate_all_methods
 from features import load_all_features
+from forecast_dl import lstm_seq2seq_forecast, transformer_forecast, xgboost_forecast  # Phase 3 DL
 
 # Import anomaly detection (LEGACY - SECONDARY)
 from predict import (
     current_analysis,
+    advanced_current_analysis,  # Phase 2
+    regime_timeline,            # Phase 2
     forecast_anomaly,
     historical_anomalies,
     model_comparison,
@@ -73,11 +82,15 @@ app = FastAPI(
         "- ACF/PACF analysis for ARIMA order selection\n"
         "- Cross-validation and method comparison\n"
         "- Prediction intervals with 95% confidence bands\n\n"
-        "**BONUS FEATURES:**\n"
-        "- Market anomaly detection (Z-Score, Isolation Forest, LSTM, Prophet)\n"
-        "- Historical crash event analysis"
+        "**BONUS FEATURES (Phase 2 Upgraded):**\n"
+        "- Market anomaly detection with 7 models:\n"
+        "  * Baseline: Z-Score, Isolation Forest, LSTM, Prophet\n"
+        "  * Advanced: XGBoost (supervised), HMM (regime), TCN (temporal)\n"
+        "- Market regime detection (bull/bear/crisis)\n"
+        "- Historical crash event analysis (24 labeled events)\n"
+        "- Advanced ensemble with macro features"
     ),
-    version="2.0.0",
+    version="2.1.0",
 )
 
 app.add_middleware(
@@ -643,7 +656,7 @@ def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
     - horizon: Forecast horizon in days (1-90, default: 30)
     - method: Specific method or 'auto' to select best (default: auto)
 
-    Methods available: naive, mean, drift, ses, holt, arima
+    Methods available: naive, mean, drift, ses, holt, arima, lstm, transformer, xgboost
 
     Returns:
     - Price forecast with 95% CI
@@ -718,7 +731,34 @@ def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
             }
             model_info = result_dict.get("model_info", {})
             model_info["category"] = "exponential_smoothing"
-        else:  # arima
+        elif method == "lstm":
+            result_dict = lstm_seq2seq_forecast(a, horizon=horizon)
+            result = {
+                "forecast": pd.Series(result_dict["forecast"]),
+                "lower": pd.Series(result_dict["lower_95"]),
+                "upper": pd.Series(result_dict["upper_95"]),
+            }
+            model_info = result_dict.get("model_info", {})
+            model_info["category"] = "deep_learning"
+        elif method == "transformer":
+            result_dict = transformer_forecast(a, horizon=horizon)
+            result = {
+                "forecast": pd.Series(result_dict["forecast"]),
+                "lower": pd.Series(result_dict["lower_95"]),
+                "upper": pd.Series(result_dict["upper_95"]),
+            }
+            model_info = result_dict.get("model_info", {})
+            model_info["category"] = "deep_learning"
+        elif method == "xgboost":
+            result_dict = xgboost_forecast(a, horizon=horizon)
+            result = {
+                "forecast": pd.Series(result_dict["forecast"]),
+                "lower": pd.Series(result_dict["lower_95"]),
+                "upper": pd.Series(result_dict["upper_95"]),
+            }
+            model_info = result_dict.get("model_info", {})
+            model_info["category"] = "gradient_boosting"
+        else:  # arima (default)
             result_dict = forecast_arima_endpoint(a, horizon)
             result = {
                 "forecast": pd.Series(result_dict["forecast"]),
@@ -914,3 +954,188 @@ def get_anomaly_evaluation():
                             detail="Evaluation report not found. Run evaluate.py first.")
     with open(report_path) as f:
         return json.load(f)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 2: ADVANCED MODEL ENDPOINTS
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/anomaly/advanced/{asset}", tags=["Anomaly Detection - Advanced"])
+def get_advanced_anomaly(asset: str):
+    """
+    Advanced anomaly analysis with all 7 models.
+
+    Returns:
+    - All 7 model scores (4 baseline + 3 advanced)
+    - Baseline ensemble vs Advanced ensemble
+    - Current market regime (bull/bear/crisis)
+    - Risk assessment using advanced models
+
+    Phase 2 addition: XGBoost (supervised), HMM (regime), TCN (deep temporal)
+    """
+    a = _check_asset(asset)
+    try:
+        return advanced_current_analysis(a)
+    except Exception as e:
+        log.error(f"advanced_current_analysis error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomaly/regime/{asset}", tags=["Anomaly Detection - Advanced"])
+def get_regime_timeline(asset: str):
+    """
+    HMM market regime timeline and statistics.
+
+    Returns:
+    - Full historical regime timeline (bull/bear/crisis)
+    - Regime transition matrix
+    - Average returns per regime
+    - Current regime state
+
+    Useful for understanding market cycles and risk periods.
+    """
+    a = _check_asset(asset)
+    try:
+        return regime_timeline(a)
+    except Exception as e:
+        log.error(f"regime_timeline error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomaly/compare-tiers/{asset}", tags=["Anomaly Detection - Advanced"])
+def compare_model_tiers(asset: str):
+    """
+    Compare baseline (4 models) vs advanced (7 models) ensemble.
+
+    Returns side-by-side comparison:
+    - Current baseline ensemble score
+    - Current advanced ensemble score
+    - Improvement delta
+    - Historical performance comparison
+
+    Shows the value of Phase 2 advanced models.
+    """
+    a = _check_asset(asset)
+    try:
+        baseline = current_analysis(a)
+        advanced = advanced_current_analysis(a)
+
+        return {
+            "asset": a,
+            "date": baseline["date"],
+            "baseline": {
+                "ensemble_score": baseline["ensemble_score"],
+                "risk_label": baseline["risk_label"],
+                "models": baseline["model_scores"],
+            },
+            "advanced": {
+                "ensemble_score": advanced["advanced_ensemble"],
+                "risk_label": advanced["risk_label"],
+                "regime": advanced["current_regime"],
+                "models": advanced["model_scores"],
+            },
+            "improvement": {
+                "score_delta": round(advanced["advanced_ensemble"] - baseline["ensemble_score"], 2),
+                "better_detection": advanced["advanced_ensemble"] > baseline["ensemble_score"],
+            },
+        }
+    except Exception as e:
+        log.error(f"compare_tiers error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PHASE 3A: DEEP LEARNING FORECASTING (NEW)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@app.get("/forecast/lstm/{asset}", tags=["Forecasting - Deep Learning"])
+def forecast_lstm(asset: str, horizon: int = 30):
+    """
+    LSTM Seq2Seq price forecast with attention weights.
+
+    Returns:
+    - Point forecast (median prediction)
+    - Lower/upper 95% confidence intervals
+    - Attention weights showing which past values influenced predictions
+    """
+    a = _check_asset(asset)
+    try:
+        return lstm_seq2seq_forecast(a, horizon=horizon)
+    except Exception as e:
+        log.error(f"LSTM forecast error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/transformer/{asset}", tags=["Forecasting - Deep Learning"])
+def forecast_transformer_endpoint(asset: str, horizon: int = 30):
+    """
+    Transformer-based price forecast with multi-head self-attention.
+
+    Returns:
+    - Point forecast
+    - Lower/upper 95% confidence intervals
+    - Transformer provides attention over historical context
+    """
+    a = _check_asset(asset)
+    try:
+        return transformer_forecast(a, horizon=horizon)
+    except Exception as e:
+        log.error(f"Transformer forecast error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/forecast/xgboost-price/{asset}", tags=["Forecasting - Deep Learning"])
+def forecast_xgboost_endpoint(asset: str, horizon: int = 30):
+    """
+    XGBoost gradient boosting price forecast with feature importance.
+
+    Returns:
+    - Point forecast
+    - Lower/upper 95% confidence intervals (from quantile regression)
+    - SHAP feature importance showing which features drive predictions
+    """
+    a = _check_asset(asset)
+    try:
+        return xgboost_forecast(a, horizon=horizon)
+    except Exception as e:
+        log.error(f"XGBoost forecast error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.websocket("/ws/scores/{asset}")
+async def websocket_live_scores(websocket: WebSocket, asset: str):
+    """
+    WebSocket endpoint for real-time anomaly score updates.
+    Sends updated scores every 60 seconds.
+    """
+    await websocket.accept()
+    a = asset.upper()
+    if a not in ASSETS:
+        await websocket.close(code=4004)
+        return
+
+    try:
+        while True:
+            # Get current scores from predict module
+            data = current_analysis(a)
+            adv = advanced_current_analysis(a)
+            payload = {
+                "asset": a,
+                "timestamp": pd.Timestamp.now().isoformat(),
+                "baseline_score": data["ensemble_score"],
+                "advanced_score": adv["advanced_ensemble"],
+                "regime": adv["current_regime"],
+                "risk_label": adv["risk_label"],
+                "model_scores": {**data["model_scores"], **{
+                    "xgb": adv["model_scores"]["xgb"],
+                    "hmm": adv["model_scores"]["hmm"],
+                    "tcn": adv["model_scores"]["tcn"],
+                }},
+            }
+            await websocket.send_json(payload)
+            await asyncio.sleep(60)  # refresh every 60 seconds
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        log.error(f"WebSocket error for {a}: {e}")
+        await websocket.close(code=1011)
+

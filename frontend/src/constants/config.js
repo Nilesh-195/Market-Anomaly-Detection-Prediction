@@ -1,4 +1,5 @@
 export const API_BASE = 'http://localhost:8000'
+export const WS_BASE_URL = 'ws://localhost:8000'
 
 export const ASSETS = [
   { ticker: 'SP500',  name: 'S&P 500',  symbol: '^GSPC' },

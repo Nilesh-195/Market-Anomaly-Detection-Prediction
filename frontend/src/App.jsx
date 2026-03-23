@@ -4,6 +4,8 @@ import { ToastContainer } from './components/ui/Toast'
 import Dashboard from './pages/Dashboard'
 import Forecast from './pages/Forecast'
 import Historical from './pages/Historical'
+import Regime from './pages/Regime'
+import AdvancedAnomaly from './pages/AdvancedAnomaly'
 import { useMarketData } from './hooks/useMarketData'
 import { useAutoRefresh } from './hooks/useAutoRefresh'
 
@@ -55,6 +57,20 @@ export default function App() {
             error={error}
           />
         )
+      case 'regime':
+        return (
+          <Regime
+            asset={selectedAsset}
+            loading={loading}
+          />
+        )
+      case 'advanced-anomaly':
+        return (
+          <AdvancedAnomaly
+            selectedAsset={selectedAsset}
+            loading={loading}
+          />
+        )
       default:
         return (
           <Dashboard
@@ -66,6 +82,7 @@ export default function App() {
             comparison={comparison}
             loading={loading}
             error={error}
+            selectedAsset={selectedAsset}
           />
         )
     }

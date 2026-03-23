@@ -101,3 +101,47 @@ export async function checkHealth() {
     return false
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEEP LEARNING FORECASTING (Phase 3 - NEW)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function fetchLstmForecast(ticker, horizon = 30) {
+  const { data } = await client.get(`/forecast/lstm/${ticker}`, {
+    params: { horizon },
+  })
+  return data
+}
+
+export async function fetchTransformerForecast(ticker, horizon = 30) {
+  const { data } = await client.get(`/forecast/transformer/${ticker}`, {
+    params: { horizon },
+  })
+  return data
+}
+
+export async function fetchXgboostForecast(ticker, horizon = 30) {
+  const { data } = await client.get(`/forecast/xgboost-price/${ticker}`, {
+    params: { horizon },
+  })
+  return data
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ADVANCED ANOMALY DETECTION (Phase 2 - NEW)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function fetchAdvancedAnomaly(ticker) {
+  const { data } = await client.get(`/anomaly/advanced/${ticker}`)
+  return data
+}
+
+export async function fetchRegimeTimeline(ticker) {
+  const { data } = await client.get(`/anomaly/regime/${ticker}`)
+  return data
+}
+
+export async function fetchCompareTiers(ticker) {
+  const { data } = await client.get(`/anomaly/compare-tiers/${ticker}`)
+  return data
+}

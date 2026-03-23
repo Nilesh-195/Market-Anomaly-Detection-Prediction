@@ -1,10 +1,14 @@
 """
 features.py
 ===========
-Computes 15+ features for every asset needed by all 4 anomaly detection models.
+Computes 25 features for every asset needed by all anomaly detection models.
+
+Phase 1 Update: Base 15 features + 10 macro cross-asset features
 
 Features built per asset
 ────────────────────────
+Base Features (15)
+──────────────────
 Price / Return
   1.  log_return          — daily log return
   2.  zscore_10           — Z-score of log_return vs 10-day rolling mean/std
@@ -33,6 +37,17 @@ Volume
 
 Composite
   15. atr_ratio           — ATR(14) / Close  (normalised true range)
+
+Macro Features (10) — Phase 1 Addition
+───────────────────────────────────────
+Leading indicators of market stress:
+  16. yield_curve         — TNX - TYX spread (negative = inversion)
+  17. yield_curve_change  — Rate of change in yield curve
+  18. dxy_return          — Daily return of US Dollar Index
+  19. dxy_zscore          — Z-score of DXY return
+  20. credit_stress       — Inverse of HYG returns (credit spread proxy)
+  21. vix_level           — Current VIX level (if not VIX asset)
+  22. vix_change_5d       — 5-day % change in VIX
 """
 
 import logging
@@ -166,6 +181,56 @@ def build_features(df: pd.DataFrame, name: str) -> pd.DataFrame:
     return feat[["Open", "High", "Low", "Close", "Volume"] + feature_cols]
 
 
+def build_macro_features(df: pd.DataFrame, macro_data: dict, name: str) -> pd.DataFrame:
+    """
+    Adds 10 macro/cross-asset features to an existing feature DataFrame.
+    Call this AFTER build_features(), pass the result of build_features() as df.
+
+    Macro features are leading indicators of market stress — signals that move
+    before crashes happen, not just after.
+
+    New features:
+      - yield_curve: TNX - TYX spread (negative = inversion, predicts recessions)
+      - yield_curve_change: Rate of change in yield curve
+      - dxy_return: Daily return of US Dollar Index (spikes during risk-off)
+      - dxy_zscore: Z-score of DXY return (extreme = flight to dollar)
+      - credit_stress: Inverse of HYG returns (HYG falls = credit spreads widen)
+      - vix_level: Current VIX level (fear gauge)
+      - vix_change_5d: 5-day % change in VIX (rapid spikes = panic)
+    """
+    feat = df.copy()
+
+    # ── Yield curve (TNX - TYX spread) ──────────────────────────────────
+    if 'TNX' in macro_data and 'TYX' in macro_data:
+        tnx = macro_data['TNX']['Close'].reindex(feat.index, method='ffill')
+        tyx = macro_data['TYX']['Close'].reindex(feat.index, method='ffill')
+        feat['yield_curve'] = (tnx - tyx).fillna(0)         # negative = inversion
+        feat['yield_curve_change'] = feat['yield_curve'].diff().fillna(0)
+
+    # ── Dollar index (DXY) ───────────────────────────────────────────────
+    if 'DXY' in macro_data:
+        dxy = macro_data['DXY']['Close'].reindex(feat.index, method='ffill')
+        dxy_ret = np.log(dxy / dxy.shift(1)).fillna(0)
+        feat['dxy_return'] = dxy_ret
+        feat['dxy_zscore'] = _rolling_zscore(dxy_ret, 20).fillna(0)
+
+    # ── Credit spread proxy (HYG inverse) ───────────────────────────────
+    if 'HYG' in macro_data:
+        hyg = macro_data['HYG']['Close'].reindex(feat.index, method='ffill')
+        hyg_ret = np.log(hyg / hyg.shift(1)).fillna(0)
+        feat['credit_stress'] = (-hyg_ret).fillna(0)    # HYG falls = credit stress rises
+
+    # ── VIX term structure (rolling 5-day change in VIX) ────────────────
+    if 'VIX' in macro_data and name != 'VIX':
+        vix = macro_data['VIX']['Close'].reindex(feat.index, method='ffill')
+        feat['vix_level'] = vix.ffill().fillna(20)
+        feat['vix_change_5d'] = vix.pct_change(5).fillna(0)
+
+    macro_cols = [c for c in feat.columns if c not in df.columns]
+    log.info(f'[{name}] Macro features added: {macro_cols} ({len(macro_cols)} new features)')
+    return feat
+
+
 # ── Validate: check for NaN / Inf ─────────────────────────────────────────────
 def validate_features(df: pd.DataFrame, name: str) -> None:
     feature_cols = [c for c in df.columns if c not in ("Open","High","Low","Close","Volume")]
@@ -186,8 +251,23 @@ def validate_features(df: pd.DataFrame, name: str) -> None:
 # ── Process all assets ────────────────────────────────────────────────────────
 def build_all_features() -> dict[str, pd.DataFrame]:
     log.info("=" * 60)
-    log.info("Feature Engineering — building 15 features for 6 assets")
+    log.info("Feature Engineering — building 15 base + 10 macro features for 6 assets")
     log.info("=" * 60)
+
+    # Load macro assets once (shared across all asset features)
+    log.info("Loading macro assets for cross-asset features...")
+    macro_data = {}
+    macro_names = ['TNX', 'TYX', 'DXY', 'HYG', 'VIX']
+    for macro_name in macro_names:
+        macro_path = RAW_DIR / f'{macro_name}.parquet'
+        if macro_path.exists():
+            macro_data[macro_name] = pd.read_parquet(macro_path)
+            log.info(f"  ✓ Loaded {macro_name} ({len(macro_data[macro_name]):,} rows)")
+        else:
+            log.warning(f"  ✗ {macro_name} not found — macro features may be incomplete")
+
+    if not macro_data:
+        log.warning("No macro assets found — skipping macro features. Run download_macro_assets() first.")
 
     results = {}
     for name in ASSETS:
@@ -199,7 +279,13 @@ def build_all_features() -> dict[str, pd.DataFrame]:
         df_raw  = pd.read_parquet(raw_path)
         df_raw.index = pd.to_datetime(df_raw.index)
 
+        # Build base features (15 original features)
         df_feat = build_features(df_raw, name)
+
+        # Add macro features if macro data is available
+        if macro_data:
+            df_feat = build_macro_features(df_feat, macro_data, name)
+
         validate_features(df_feat, name)
 
         out_path = PROCESSED_DIR / f"{name}_features.parquet"

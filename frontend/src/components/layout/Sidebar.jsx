@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   LayoutDashboard, ChevronLeft, ChevronRight,
-  TrendingUp, History, Activity, Info,
+  TrendingUp, History, Activity, Info, Layers, AlertCircle,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { getRiskColor, getRiskLabel } from '../../utils/riskHelpers'
@@ -12,6 +12,8 @@ const NAV_ITEMS = [
   { id: 'dashboard',  label: 'Dashboard',   Icon: LayoutDashboard },
   { id: 'forecast',   label: 'Forecast',    Icon: TrendingUp },
   { id: 'historical', label: 'Historical',  Icon: History },
+  { id: 'regime',     label: 'Regime',      Icon: Layers },
+  { id: 'advanced-anomaly', label: 'Advanced',   Icon: AlertCircle },
 ]
 
 export default function Sidebar({ activePage, onPageChange, sp500Score }) {

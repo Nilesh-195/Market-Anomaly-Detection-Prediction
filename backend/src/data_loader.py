@@ -1,17 +1,24 @@
 """
 data_loader.py
 ==============
-Downloads 14 years of daily OHLCV data for 6 assets via yfinance.
+Downloads 14 years of daily OHLCV data for 6 main assets + 5 macro assets via yfinance.
 Saves each asset as a parquet file in backend/data/raw/.
-Also creates crash_labels.json in backend/data/.
+Also creates crash_labels.json in backend/data/ with 25 labeled market events.
 
-Assets:
+Main Assets:
   ^GSPC  — S&P 500 Index
   ^VIX   — CBOE Volatility Index (Fear Index)
   BTC-USD — Bitcoin / USD
   GLD    — SPDR Gold ETF
   QQQ    — Invesco Nasdaq-100 ETF
   TSLA   — Tesla Inc.
+
+Macro Assets (Phase 1 addition):
+  ^TNX    — 10-year Treasury Yield
+  ^TYX    — 30-year Treasury Yield
+  DX-Y.NYB — US Dollar Index
+  HYG     — High Yield Corporate Bond ETF
+  TLT     — 20+ Year Treasury Bond ETF
 """
 
 import os
@@ -46,6 +53,16 @@ ASSETS = {
     "GLD":     "GOLD",
     "QQQ":     "NASDAQ",
     "TSLA":    "TESLA",
+}
+
+# ── Macro/Cross-Asset Tickers ──────────────────────────────────────────────────
+# Leading indicators for market stress — signals that move before crashes
+MACRO_ASSETS = {
+    "^TNX":      "TNX",      # 10-year Treasury yield (yield curve)
+    "^TYX":      "TYX",      # 30-year Treasury yield
+    "DX-Y.NYB":  "DXY",      # US Dollar Index — spikes during risk-off
+    "HYG":       "HYG",      # High yield bond ETF — credit spread proxy
+    "TLT":       "TLT",      # Long bond ETF — flight to safety signal
 }
 
 START_DATE = "2010-01-01"
@@ -146,6 +163,84 @@ CRASH_EVENTS = [
         "impact":          "extreme",
         "assets_affected": ["SP500", "NASDAQ", "TESLA", "BTC", "VIX"],
     },
+    # ── Phase 1 Expansion: +12 new events (13 → 25 total) ──
+    {
+        "date":            "2011-07-01",
+        "event":           "European Debt Crisis Peak",
+        "description":     "Greece bailout fears. Italian and Spanish yields spiked. EURUSD collapsed.",
+        "impact":          "high",
+        "assets_affected": ["SP500", "NASDAQ", "GOLD", "VIX"],
+    },
+    {
+        "date":            "2013-06-20",
+        "event":           "Taper Tantrum",
+        "description":     "Bernanke hints at QE tapering. 10-year yield jumped 100bps in weeks.",
+        "impact":          "medium",
+        "assets_affected": ["SP500", "NASDAQ", "GOLD", "VIX"],
+    },
+    {
+        "date":            "2014-10-15",
+        "event":           "US Treasury Flash Rally",
+        "description":     "10-year Treasury yield flash crashed. Equity vol spiked briefly.",
+        "impact":          "medium",
+        "assets_affected": ["SP500", "VIX"],
+    },
+    {
+        "date":            "2016-06-24",
+        "event":           "Brexit Vote",
+        "description":     "UK voted to leave EU. GBP crashed 10%. Global markets fell sharply.",
+        "impact":          "high",
+        "assets_affected": ["SP500", "NASDAQ", "GOLD", "VIX"],
+    },
+    {
+        "date":            "2018-10-10",
+        "event":           "October 2018 Selloff",
+        "description":     "Tech selloff triggered by rate fears. Nasdaq fell 10% in 10 days.",
+        "impact":          "medium",
+        "assets_affected": ["SP500", "NASDAQ", "TESLA", "VIX"],
+    },
+    {
+        "date":            "2019-09-17",
+        "event":           "Repo Market Crisis",
+        "description":     "Overnight repo rates spiked to 10%. Fed emergency repo injections required.",
+        "impact":          "medium",
+        "assets_affected": ["SP500", "VIX"],
+    },
+    {
+        "date":            "2022-03-07",
+        "event":           "Russia-Ukraine Commodity Shock",
+        "description":     "Oil hit $130. Commodity prices spiked globally. Stagflation fears.",
+        "impact":          "high",
+        "assets_affected": ["SP500", "NASDAQ", "GOLD", "VIX"],
+    },
+    {
+        "date":            "2022-11-09",
+        "event":           "FTX Collapse",
+        "description":     "FTX crypto exchange collapsed. $8B shortfall. Bitcoin fell 25% in 48hrs.",
+        "impact":          "high",
+        "assets_affected": ["BTC", "VIX"],
+    },
+    {
+        "date":            "2023-05-01",
+        "event":           "First Republic Bank Failure",
+        "description":     "First Republic Bank seized by FDIC. Third major US bank failure of 2023.",
+        "impact":          "medium",
+        "assets_affected": ["SP500", "NASDAQ", "VIX"],
+    },
+    {
+        "date":            "2025-04-07",
+        "event":           "US Tariff Shock 2025",
+        "description":     "Trump tariff announcements triggered global selloff. S&P fell 10% in 3 days.",
+        "impact":          "extreme",
+        "assets_affected": ["SP500", "NASDAQ", "TESLA", "BTC", "VIX"],
+    },
+    {
+        "date":            "2025-01-27",
+        "event":           "DeepSeek AI Shock",
+        "description":     "Chinese AI lab DeepSeek released R1. Nvidia fell 17% in one day. Tech selloff.",
+        "impact":          "high",
+        "assets_affected": ["SP500", "NASDAQ", "TESLA", "VIX"],
+    },
 ]
 
 
@@ -207,10 +302,10 @@ def save_crash_labels() -> None:
             "Ground-truth anomaly events used for model evaluation. "
             "Each date represents a known market crash or extreme event. "
             "Data range: 2010-01-01 to present. "
-            "Note: Lehman Brothers (2008-09-15) excluded — predates data range."
+            "Phase 1: Expanded from 13 to 25 events for improved supervised learning."
         ),
         "total_events": len(CRASH_EVENTS),
-        "coverage_note": "Events span full data range 2010-2026 with no gap > 18 months",
+        "coverage_note": "25 events spanning full data range 2010-2026 with comprehensive market coverage",
         "impact_scale": {
             "extreme": "Cross-market systemic event, >30% drawdown or VIX > 50",
             "high":    "Major multi-market selloff, VIX spike > 30%",
@@ -275,6 +370,30 @@ def download_all() -> dict[str, pd.DataFrame]:
 
     log.info("=" * 60)
     log.info(f"Download complete — {len(datasets)}/{len(ASSETS)} assets ready.")
+    log.info("=" * 60)
+    return datasets
+
+
+def download_macro_assets() -> dict[str, pd.DataFrame]:
+    """
+    Download macro/sentiment data for cross-asset features.
+    These are leading indicators that move before crashes happen.
+    """
+    log.info("=" * 60)
+    log.info(f"Macro Assets — Leading Indicators")
+    log.info(f"Period : {START_DATE} → {END_DATE}")
+    log.info(f"Assets : {', '.join(MACRO_ASSETS.values())}")
+    log.info("=" * 60)
+
+    datasets = {}
+    for ticker, name in MACRO_ASSETS.items():
+        df = download_asset(ticker, name)
+        if df is not None:
+            validate_data(name, df)
+            datasets[name] = df
+
+    log.info("=" * 60)
+    log.info(f"Macro download complete — {len(datasets)}/{len(MACRO_ASSETS)} assets ready.")
     log.info("=" * 60)
     return datasets
 

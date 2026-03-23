@@ -19,3 +19,10 @@ torch==2.10.0
 torchvision==0.25.0
 uvicorn==0.41.0
 yfinance==1.2.0
+
+# Phase 1 additions — Advanced models & macro data
+xgboost==2.1.1
+hmmlearn==0.3.2
+shap==0.46.0
+fredapi==0.5.2
+python-dotenv==1.0.1
