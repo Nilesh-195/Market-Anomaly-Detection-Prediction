@@ -106,25 +106,65 @@ export async function checkHealth() {
 // DEEP LEARNING FORECASTING (Phase 3 - NEW)
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Normalize the flat DL/XGBoost response format into the standard nested
+ * format that Forecast.jsx expects.
+ * Flat:   { forecast: [...], lower_95: [...], upper_95: [...], dates: [...], ... }
+ * Nested: { current_price, horizon, method, forecast: { values, lower_95, upper_95, dates }, summary }
+ */
+function _normalizeDlResponse(data) {
+  if (!data) return data
+  // Already in nested format (has forecast.values)
+  if (data.forecast && !Array.isArray(data.forecast)) return data
+
+  const forecastArr = Array.isArray(data.forecast) ? data.forecast : []
+  const currentPrice = forecastArr[0] ?? 0   // best approximation when unavailable
+  const lastPrice = forecastArr[forecastArr.length - 1] ?? currentPrice
+  const expectedReturn = currentPrice > 0
+    ? parseFloat((((lastPrice / currentPrice) - 1) * 100).toFixed(2))
+    : 0
+
+  return {
+    asset: data.asset,
+    current_price: data.current_price ?? currentPrice,
+    horizon: data.horizon ?? forecastArr.length,
+    method: data.method,
+    model_info: data.model_info ?? {},
+    forecast: {
+      values: forecastArr,
+      lower_95: data.lower_95 ?? forecastArr,
+      upper_95: data.upper_95 ?? forecastArr,
+      dates: data.dates ?? [],
+    },
+    summary: {
+      forecast_30d: lastPrice,
+      expected_return_pct: expectedReturn,
+    },
+    // Pass through extras for charts (attention, feature importance)
+    attention_weights: data.attention_weights ?? null,
+    feature_importance: data.feature_importance ?? null,
+  }
+}
+
 export async function fetchLstmForecast(ticker, horizon = 30) {
   const { data } = await client.get(`/forecast/lstm/${ticker}`, {
     params: { horizon },
   })
-  return data
+  return _normalizeDlResponse(data)
 }
 
 export async function fetchTransformerForecast(ticker, horizon = 30) {
   const { data } = await client.get(`/forecast/transformer/${ticker}`, {
     params: { horizon },
   })
-  return data
+  return _normalizeDlResponse(data)
 }
 
 export async function fetchXgboostForecast(ticker, horizon = 30) {
   const { data } = await client.get(`/forecast/xgboost-price/${ticker}`, {
     params: { horizon },
   })
-  return data
+  return _normalizeDlResponse(data)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

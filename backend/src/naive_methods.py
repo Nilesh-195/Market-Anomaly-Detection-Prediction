@@ -384,7 +384,8 @@ def run_all_naive_methods(
     train: pd.Series,
     test: pd.Series,
     seasonal_period: int = 21,
-    name: str = "Series"
+    name: str = "Series",
+    horizon: Optional[int] = None
 ) -> dict:
     """
     Run all 4 naive methods and compare performance.
@@ -404,7 +405,7 @@ def run_all_naive_methods(
     -------
     dict with results for each method and comparison table
     """
-    horizon = len(test)
+    horizon = horizon if horizon is not None else len(test)
     log.info(f"\n[{name}] Running naive methods — horizon={horizon}")
 
     # Run each method
@@ -415,10 +416,14 @@ def run_all_naive_methods(
         "drift": drift_forecast(train, horizon),
     }
 
-    # Evaluate each method
     comparison = []
     for method_name, result in methods.items():
-        metrics = calculate_metrics(test.values, result["forecast"].values)
+        if len(test) > 0:
+            metrics = calculate_metrics(test.values, result["forecast"].values)
+            result["metrics"] = metrics
+        else:
+            metrics = {"rmse": np.nan, "mae": np.nan, "mape": np.nan, "smape": np.nan}
+            
         comparison.append({
             "Method": method_name,
             "RMSE": metrics["rmse"],
@@ -426,7 +431,6 @@ def run_all_naive_methods(
             "MAPE": metrics["mape"],
             "SMAPE": metrics["smape"],
         })
-        result["metrics"] = metrics
 
     # Create comparison DataFrame
     comparison_df = pd.DataFrame(comparison)

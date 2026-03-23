@@ -397,11 +397,11 @@ def forecast_naive(asset: str, horizon: int = 30):
             raise HTTPException(status_code=404, detail=f"Data for {a} not found")
 
         series = features_data[a]["Close"]
-        train = series.iloc[:-horizon] if len(series) > horizon else series
-        test = series.iloc[-horizon:] if len(series) > horizon else pd.Series([])
+        train = series
+        test = pd.Series([], dtype=float)
 
         # Run all naive methods
-        results = run_all_naive_methods(train, test, seasonal_period=21, name=a)
+        results = run_all_naive_methods(train, test, seasonal_period=21, name=a, horizon=horizon)
 
         # Format output
         methods_output = {}
@@ -466,11 +466,11 @@ def forecast_exponential(asset: str, horizon: int = 30, method: str = "auto"):
             raise HTTPException(status_code=404, detail=f"Data for {a} not found")
 
         series = features_data[a]["Close"]
-        train = series.iloc[:-horizon] if len(series) > horizon else series
-        test = series.iloc[-horizon:] if len(series) > horizon else pd.Series([])
+        train = series
+        test = pd.Series([], dtype=float)
 
         # Run exp smoothing
-        results = run_all_exp_smoothing(train, test, seasonal_period=21, name=a)
+        results = run_all_exp_smoothing(train, test, seasonal_period=21, name=a, horizon=horizon)
 
         if method == "auto":
             method_name = results["best_method"]
@@ -550,7 +550,7 @@ def forecast_arima_endpoint(
             raise HTTPException(status_code=404, detail=f"Data for {a} not found")
 
         series = features_data[a]["Close"]
-        train = series.iloc[:-horizon] if len(series) > horizon else series
+        train = series
 
         # Auto-select order if not provided
         if p is None or d is None or q is None:
@@ -674,8 +674,8 @@ def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
             raise HTTPException(status_code=404, detail=f"Data for {a} not found")
 
         series = features_data[a]["Close"]
-        train = series.iloc[:-horizon] if len(series) > horizon else series
-        test = series.iloc[-horizon:] if len(series) > horizon else pd.Series([])
+        train = series
+        test = pd.Series([], dtype=float)
 
         # If auto, determine best method via quick comparison
         if method == "auto":
@@ -1060,7 +1060,19 @@ def forecast_lstm(asset: str, horizon: int = 30):
     """
     a = _check_asset(asset)
     try:
-        return lstm_seq2seq_forecast(a, horizon=horizon)
+        result = lstm_seq2seq_forecast(a, horizon=horizon)
+        # Get current price
+        features_data = load_all_features()
+        current_price = float(features_data[a]["Close"].iloc[-1]) if a in features_data else result["forecast"][0]
+        forecast_last = result["forecast"][-1] if result["forecast"] else current_price
+        return {
+            **result,
+            "current_price": current_price,
+            "summary": {
+                "forecast_30d": float(forecast_last),
+                "expected_return_pct": round(((float(forecast_last) / current_price) - 1) * 100, 2) if current_price else 0,
+            },
+        }
     except Exception as e:
         log.error(f"LSTM forecast error for {a}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1078,7 +1090,18 @@ def forecast_transformer_endpoint(asset: str, horizon: int = 30):
     """
     a = _check_asset(asset)
     try:
-        return transformer_forecast(a, horizon=horizon)
+        result = transformer_forecast(a, horizon=horizon)
+        features_data = load_all_features()
+        current_price = float(features_data[a]["Close"].iloc[-1]) if a in features_data else result["forecast"][0]
+        forecast_last = result["forecast"][-1] if result["forecast"] else current_price
+        return {
+            **result,
+            "current_price": current_price,
+            "summary": {
+                "forecast_30d": float(forecast_last),
+                "expected_return_pct": round(((float(forecast_last) / current_price) - 1) * 100, 2) if current_price else 0,
+            },
+        }
     except Exception as e:
         log.error(f"Transformer forecast error for {a}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1096,7 +1119,18 @@ def forecast_xgboost_endpoint(asset: str, horizon: int = 30):
     """
     a = _check_asset(asset)
     try:
-        return xgboost_forecast(a, horizon=horizon)
+        result = xgboost_forecast(a, horizon=horizon)
+        features_data = load_all_features()
+        current_price = float(features_data[a]["Close"].iloc[-1]) if a in features_data else result["forecast"][0]
+        forecast_last = result["forecast"][-1] if result["forecast"] else current_price
+        return {
+            **result,
+            "current_price": current_price,
+            "summary": {
+                "forecast_30d": float(forecast_last),
+                "expected_return_pct": round(((float(forecast_last) / current_price) - 1) * 100, 2) if current_price else 0,
+            },
+        }
     except Exception as e:
         log.error(f"XGBoost forecast error for {a}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

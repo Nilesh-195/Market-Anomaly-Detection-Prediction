@@ -409,12 +409,13 @@ def run_all_exp_smoothing(
     train: pd.Series,
     test: pd.Series,
     seasonal_period: int = 21,
-    name: str = "Series"
+    name: str = "Series",
+    horizon: Optional[int] = None
 ) -> dict:
     """
     Run all exponential smoothing methods and compare.
     """
-    horizon = len(test)
+    horizon = horizon if horizon is not None else len(test)
     log.info(f"\n[{name}] Running exponential smoothing methods — horizon={horizon}")
 
     methods = {}
@@ -443,10 +444,14 @@ def run_all_exp_smoothing(
     except Exception as e:
         log.warning(f"Holt-Winters failed: {e}")
 
-    # Evaluate each method
     comparison = []
     for method_name, result in methods.items():
-        metrics = calculate_metrics(test.values, result["forecast"].values)
+        if len(test) > 0:
+            metrics = calculate_metrics(test.values, result["forecast"].values)
+            result["metrics"] = metrics
+        else:
+            metrics = {"rmse": np.nan, "mae": np.nan, "mape": np.nan}
+            
         comparison.append({
             "Method": method_name,
             "RMSE": metrics["rmse"],
@@ -455,7 +460,6 @@ def run_all_exp_smoothing(
             "AIC": result.get("aic", np.nan),
             "BIC": result.get("bic", np.nan),
         })
-        result["metrics"] = metrics
 
     comparison_df = pd.DataFrame(comparison)
     comparison_df = comparison_df.sort_values("RMSE")

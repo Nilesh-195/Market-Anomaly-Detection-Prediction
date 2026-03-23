@@ -79,9 +79,9 @@ class LSTMSeq2Seq(nn.Module):
             dropout=dropout if num_layers > 1 else 0,
         )
 
-        # Decoder: LSTM for next N days
+        # Decoder: LSTM — input is a single price value (size=1)
         self.decoder = nn.LSTM(
-            input_size=hidden_size,  # Changed from input_size to hidden_size
+            input_size=1,  # FIX: input is a scalar price, not hidden_size
             hidden_size=hidden_size,
             num_layers=num_layers,
             batch_first=True,
@@ -111,41 +111,38 @@ class LSTMSeq2Seq(nn.Module):
         """
         batch_size = x.size(0)
 
-        # Encoder: get context from past 30 days
+        # Encode the past window
         encoder_out, (h_n, c_n) = self.encoder(x)  # (batch, lookback, hidden)
 
-        # Attention
-        attn_out, attn_weights = self.attention(
-            query=encoder_out, key=encoder_out, value=encoder_out
-        )  # (batch, lookback, hidden), (batch, lookback, lookback)
+        # Decoder seed: last observed price
+        decoder_input = x[:, -1:, :]  # (batch, 1, 1) — last price
 
-        # Decoder: generate next N days
-        decoder_input = attn_out  # Use attention output (batch, 1, hidden) instead of encoder_out
         outputs = []
         attention_weights_list = []
 
         for t in range(self.horizon):
+            # Decode one step
             decoder_out, (h_n, c_n) = self.decoder(
                 decoder_input, (h_n, c_n)
             )  # (batch, 1, hidden)
 
-            # Apply attention
+            # Cross-attention: query=decoder state, key/value=encoder states
             attn_out, attn_w = self.attention(
                 query=decoder_out, key=encoder_out, value=encoder_out
-            )  # (batch, 1, hidden)
+            )  # (batch, 1, hidden), (batch, 1, lookback)
             attention_weights_list.append(
-                attn_w.squeeze(1)
-            )  # (batch, lookback)
+                attn_w.squeeze(1)  # (batch, lookback)
+            )
 
             # Predict quantiles
             pred = self.fc(attn_out)  # (batch, 1, 3)
             outputs.append(pred)
 
-            # Teacher forcing or use own prediction
+            # Next decoder input: teacher forcing or predicted point estimate
             if target is not None:
-                decoder_input = target[:, t : t + 1, :]
+                decoder_input = target[:, t : t + 1, :]  # (batch, 1, 1)
             else:
-                decoder_input = pred[:, :, 1:2]  # Use point estimate
+                decoder_input = pred[:, :, 1:2]  # point estimate (batch, 1, 1)
 
         # Stack outputs
         output = torch.cat(outputs, dim=1)  # (batch, horizon, 3)
@@ -222,18 +219,17 @@ class TransformerForecaster(nn.Module):
             x: (batch, lookback, 1) - past 30 days
         Returns:
             output: (batch, horizon, 3) - quantile predictions
-            attention_weights: (batch, nhead, horizon, lookback)
+            attention_weights: None
         """
         batch_size = x.size(0)
+        seq_len = x.size(1)
 
         # Project to d_model
         x = self.input_proj(x)  # (batch, lookback, d_model)
 
-        # Add positional encoding (ensure size matches)
-        pos = self.pos_encoder[:, : x.size(1), :].to(x.device)
-        if pos.size(0) == 1:
-            pos = pos.expand(batch_size, -1, -1)
-        x = x + pos[:batch_size, :x.size(1), :]
+        # Add positional encoding — FIX: use slicing only, no expand by batch_size
+        pos = self.pos_encoder[:, :seq_len, :].to(x.device)  # (1, seq_len, d_model)
+        x = x + pos  # broadcasts correctly: (batch, seq_len, d_model)
 
         # Transformer
         transformer_out = self.transformer_encoder(x)  # (batch, lookback, d_model)
@@ -287,10 +283,11 @@ def train_lstm_seq2seq(
         model: Trained model
         scaler: MinMax scaler (min, max values)
     """
-    # Normalize
-    min_val = close_prices.min()
-    max_val = close_prices.max()
-    normalized = (close_prices - min_val) / (max_val - min_val + 1e-8)
+    # Convert to log returns to make data stationary
+    returns = np.log(close_prices[1:] / close_prices[:-1])
+    mean_val = returns.mean()
+    std_val = returns.std()
+    normalized = (returns - mean_val) / (std_val + 1e-8)
 
     # Create sequences
     X, Y = create_sequences(normalized, lookback, horizon)
@@ -341,7 +338,7 @@ def train_lstm_seq2seq(
 
             optimizer.zero_grad()
             output, _ = model(X_batch, Y_batch)
-            loss = criterion(output, Y_batch)
+            loss = criterion(output, Y_batch.squeeze(-1))  # FIX: squeeze (batch,horizon,1)->(batch,horizon)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
@@ -356,7 +353,7 @@ def train_lstm_seq2seq(
             X_test_device = X_test.to(device)
             Y_test_device = Y_test.to(device)
             output_test, _ = model(X_test_device)
-            val_loss = criterion(output_test, Y_test_device).item()
+            val_loss = criterion(output_test, Y_test_device.squeeze(-1)).item()  # FIX: squeeze
 
         scheduler.step(val_loss)
 
@@ -377,7 +374,7 @@ def train_lstm_seq2seq(
             print(f"[{asset_name}] LSTM early stopping at epoch {epoch+1}")
             break
 
-    scaler = {"min": float(min_val), "max": float(max_val)}
+    scaler = {"mean": float(mean_val), "std": float(std_val), "mode": "returns"}
     return model.cpu(), scaler
 
 
@@ -398,10 +395,11 @@ def train_transformer(
         model: Trained model
         scaler: MinMax scaler
     """
-    # Normalize
-    min_val = close_prices.min()
-    max_val = close_prices.max()
-    normalized = (close_prices - min_val) / (max_val - min_val + 1e-8)
+    # Convert to log returns
+    returns = np.log(close_prices[1:] / close_prices[:-1])
+    mean_val = returns.mean()
+    std_val = returns.std()
+    normalized = (returns - mean_val) / (std_val + 1e-8)
 
     # Create sequences
     X, Y = create_sequences(normalized, lookback, horizon)
@@ -454,7 +452,7 @@ def train_transformer(
 
             optimizer.zero_grad()
             output, _ = model(X_batch)
-            loss = criterion(output, Y_batch)
+            loss = criterion(output, Y_batch.squeeze(-1))  # FIX: squeeze (batch,horizon,1)->(batch,horizon)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
@@ -469,7 +467,7 @@ def train_transformer(
             X_test_device = X_test.to(device)
             Y_test_device = Y_test.to(device)
             output_test, _ = model(X_test_device)
-            val_loss = criterion(output_test, Y_test_device).item()
+            val_loss = criterion(output_test, Y_test_device.squeeze(-1)).item()  # FIX: squeeze
 
         scheduler.step(val_loss)
 
@@ -490,7 +488,7 @@ def train_transformer(
             print(f"[{asset_name}] Transformer early stopping at epoch {epoch+1}")
             break
 
-    scaler = {"min": float(min_val), "max": float(max_val)}
+    scaler = {"mean": float(mean_val), "std": float(std_val), "mode": "returns"}
     return model.cpu(), scaler
 
 

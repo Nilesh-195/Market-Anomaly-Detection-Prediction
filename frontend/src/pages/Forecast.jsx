@@ -9,7 +9,7 @@ import ForecastChart from '../components/charts/ForecastChart'
 import AttentionHeatmap from '../components/charts/AttentionHeatmap'
 import FeatureImportanceChart from '../components/charts/FeatureImportanceChart'
 import { formatPrice, formatPct, formatDate } from '../utils/formatters'
-import { fetchLstmForecast, fetchTransformerForecast, fetchXgboostForecast } from '../services/api'
+import { fetchLstmForecast, fetchTransformerForecast, fetchXgboostForecast, fetchPriceForecast } from '../services/api'
 import clsx from 'clsx'
 
 const FORECAST_METHODS = [
@@ -23,16 +23,20 @@ const FORECAST_METHODS = [
   { id: 'xgboost', label: 'XGBoost', category: 'Gradient Boosting' },
 ]
 
-export default function Forecast({ priceForecast: initialPriceForecast, selectedAsset, loading: parentLoading, error: parentError }) {
+export default function Forecast({ priceForecast: initialPriceForecast, selectedAsset, loading: parentLoading }) {
   const [selectedMethod, setSelectedMethod] = useState('auto')
   const [priceForecast, setPriceForecast] = useState(initialPriceForecast)
   const [loading, setLoading] = useState(parentLoading)
-  const [error, setError] = useState(parentError)
+  const [error, setError] = useState(null)
 
   // Load forecast data when method or asset changes
   useEffect(() => {
-    if (!selectedAsset || selectedMethod === 'auto') {
+    if (!selectedAsset) return
+
+    if (selectedMethod === 'auto') {
       setPriceForecast(initialPriceForecast)
+      setLoading(parentLoading)
+      setError(null)
       return
     }
 
@@ -47,7 +51,8 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
     } else if (selectedMethod === 'xgboost') {
       promise = fetchXgboostForecast(selectedAsset, 30)
     } else {
-      return
+      // Classical methods: naive, arima, ses, holt — use the price endpoint with method param
+      promise = fetchPriceForecast(selectedAsset, 30, selectedMethod)
     }
 
     promise
@@ -57,19 +62,43 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
       })
       .catch(err => {
         setError(err?.message || 'Failed to load forecast')
-        setPriceForecast(initialPriceForecast)
+        if (initialPriceForecast) setPriceForecast(initialPriceForecast)
       })
       .finally(() => setLoading(false))
-  }, [selectedMethod, selectedAsset, initialPriceForecast])
+  }, [selectedMethod, selectedAsset])
 
-  // Update when parent changes (initial load)
+  // Sync when parent's initial forecast data arrives
+  useEffect(() => {
+    if (selectedMethod === 'auto' && initialPriceForecast) {
+      setPriceForecast(initialPriceForecast)
+      setLoading(false)
+      setError(null)
+    }
+  }, [initialPriceForecast])
+
+  // Reflect parent loading state only for 'auto' method
   useEffect(() => {
     if (selectedMethod === 'auto') {
-      setPriceForecast(initialPriceForecast)
       setLoading(parentLoading)
-      setError(parentError)
     }
-  }, [initialPriceForecast, parentLoading, parentError])
+  }, [parentLoading, selectedMethod])
+
+  // Self-fetch fallback: if parent gave no data and finished loading, fetch directly
+  useEffect(() => {
+    if (!parentLoading && !initialPriceForecast && selectedMethod === 'auto' && selectedAsset) {
+      setLoading(true)
+      setError(null)
+      fetchPriceForecast(selectedAsset, 30, 'auto')
+        .then(data => {
+          setPriceForecast(data)
+          setError(null)
+        })
+        .catch(err => {
+          setError(err?.message || 'Failed to load forecast data')
+        })
+        .finally(() => setLoading(false))
+    }
+  }, [parentLoading, initialPriceForecast, selectedAsset, selectedMethod])
 
   const currentPrice = priceForecast?.current_price ?? 0
   const forecastValues = priceForecast?.forecast?.values ?? []
@@ -96,7 +125,7 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
 
   const isPositive = expectedReturn >= 0
 
-  if (loading) {
+  if (loading && !priceForecast) {
     return (
       <div className="space-y-6">
         <div>
@@ -110,7 +139,7 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
     )
   }
 
-  if (error) {
+  if (error && !priceForecast) {
     return (
       <div className="space-y-6">
         <div>

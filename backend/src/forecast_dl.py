@@ -18,11 +18,17 @@ import pickle
 from pathlib import Path
 import logging
 
-from dl_models import forecast_dl_model
+from dl_models import forecast_dl_model, LSTMSeq2Seq, TransformerForecaster
 from gb_models import forecast_xgboost_recursive
 from features import load_all_features
 
 logger = logging.getLogger(__name__)
+
+# Allowlist custom model classes so torch.load works with weights_only=True as well
+try:
+    torch.serialization.add_safe_globals([LSTMSeq2Seq, TransformerForecaster])
+except AttributeError:
+    pass  # Older torch versions don't have add_safe_globals
 
 # Model paths
 MODEL_DIR = Path(__file__).parent.parent / "models"
@@ -45,7 +51,8 @@ def _load_dl_model(asset, model_name):
     if not model_path.exists():
         raise FileNotFoundError(f"Model not found: {model_path}")
 
-    model = torch.load(model_path, map_location='cpu')
+    # weights_only=False needed to load full model objects (PyTorch 2.6+)
+    model = torch.load(model_path, map_location='cpu', weights_only=False)
     model.eval()
 
     if meta_path.exists():
@@ -58,25 +65,13 @@ def _load_dl_model(asset, model_name):
 
 
 def _load_xgboost_model(asset):
-    """Load XGBoost models.
-
-    Args:
-        asset: Asset name
-
-    Returns:
-        models: Dict with 3 quantile models
-        scaler: sklearn MinMaxScaler
-        feature_names: List of feature names
-    """
+    """Load XGBoost models. Returns full meta dict."""
     meta_path = MODEL_DIR / asset / "xgboost_meta.pkl"
-
     if not meta_path.exists():
         raise FileNotFoundError(f"XGBoost meta not found: {meta_path}")
-
     with open(meta_path, 'rb') as f:
         meta = pickle.load(f)
-
-    return meta.get('models'), meta.get('scaler'), meta.get('feature_names')
+    return meta
 
 
 def lstm_seq2seq_forecast(asset, horizon=30):
@@ -108,13 +103,23 @@ def lstm_seq2seq_forecast(asset, horizon=30):
         features_data = load_all_features()
         df = features_data[asset]
 
-        # Get last 30 days normalized
-        min_val = scaler['min']
-        max_val = scaler['max']
-        range_val = max_val - min_val + 1e-8
+        mode = scaler.get('mode', 'prices')
+        current_price = float(df['Close'].iloc[-1])
 
-        last_prices = df['Close'].iloc[-30:].values
-        normalized = (last_prices - min_val) / range_val
+        if mode == 'returns':
+            # New returns-based mode
+            last_prices = df['Close'].iloc[-31:].values
+            returns = np.log(last_prices[1:] / last_prices[:-1])
+            mean_val = scaler['mean']
+            std_val = scaler['std']
+            normalized = (returns - mean_val) / (std_val + 1e-8)
+        else:
+            # Legacy absolute prices mode
+            min_val = scaler['min']
+            max_val = scaler['max']
+            range_val = max_val - min_val + 1e-8
+            last_prices = df['Close'].iloc[-30:].values
+            normalized = (last_prices - min_val) / range_val
 
         # Forecast
         with torch.no_grad():
@@ -127,10 +132,19 @@ def lstm_seq2seq_forecast(asset, horizon=30):
             lower = output[:, 0]
             upper = output[:, 2]
 
-            # Denormalize
-            point = point * range_val + min_val
-            lower = lower * range_val + min_val
-            upper = upper * range_val + min_val
+            if mode == 'returns':
+                point_ret = point * std_val + mean_val
+                lower_ret = lower * std_val + mean_val
+                upper_ret = upper * std_val + mean_val
+
+                point = current_price * np.exp(np.cumsum(point_ret))
+                lower = current_price * np.exp(np.cumsum(lower_ret))
+                upper = current_price * np.exp(np.cumsum(upper_ret))
+            else:
+                # Denormalize
+                point = point * range_val + min_val
+                lower = lower * range_val + min_val
+                upper = upper * range_val + min_val
 
             # Attention weights
             attn_weights = (
@@ -183,13 +197,23 @@ def transformer_forecast(asset, horizon=30):
         features_data = load_all_features()
         df = features_data[asset]
 
-        # Get last 30 days normalized
-        min_val = scaler['min']
-        max_val = scaler['max']
-        range_val = max_val - min_val + 1e-8
+        mode = scaler.get('mode', 'prices')
+        current_price = float(df['Close'].iloc[-1])
 
-        last_prices = df['Close'].iloc[-30:].values
-        normalized = (last_prices - min_val) / range_val
+        if mode == 'returns':
+            # New returns-based mode
+            last_prices = df['Close'].iloc[-31:].values
+            returns = np.log(last_prices[1:] / last_prices[:-1])
+            mean_val = scaler['mean']
+            std_val = scaler['std']
+            normalized = (returns - mean_val) / (std_val + 1e-8)
+        else:
+            # Legacy absolute prices mode
+            min_val = scaler['min']
+            max_val = scaler['max']
+            range_val = max_val - min_val + 1e-8
+            last_prices = df['Close'].iloc[-30:].values
+            normalized = (last_prices - min_val) / range_val
 
         # Forecast
         with torch.no_grad():
@@ -202,10 +226,19 @@ def transformer_forecast(asset, horizon=30):
             lower = output[:, 0]
             upper = output[:, 2]
 
-            # Denormalize
-            point = point * range_val + min_val
-            lower = lower * range_val + min_val
-            upper = upper * range_val + min_val
+            if mode == 'returns':
+                point_ret = point * std_val + mean_val
+                lower_ret = lower * std_val + mean_val
+                upper_ret = upper * std_val + mean_val
+
+                point = current_price * np.exp(np.cumsum(point_ret))
+                lower = current_price * np.exp(np.cumsum(lower_ret))
+                upper = current_price * np.exp(np.cumsum(upper_ret))
+            else:
+                # Denormalize
+                point = point * range_val + min_val
+                lower = lower * range_val + min_val
+                upper = upper * range_val + min_val
 
         # Generate dates
         last_date = pd.Timestamp(df.index[-1])
@@ -236,78 +269,94 @@ def transformer_forecast(asset, horizon=30):
 
 
 def xgboost_forecast(asset, horizon=30):
-    """Generate XGBoost forecast with feature importance.
+    """Generate XGBoost forecast using log-return compounding.
 
-    Args:
-        asset: Asset name
-        horizon: Prediction horizon
-
-    Returns:
-        dict: {
-            "asset": str,
-            "date": str,
-            "method": "xgboost",
-            "forecast": [float] × horizon,
-            "lower_95": [float] × horizon,
-            "upper_95": [float] × horizon,
-            "dates": [str] × horizon,
-            "feature_importance": {feature_name: float},
-            "model_info": {
-                "type": "gradient boosting (XGBoost)",
-                "n_estimators": 100
-            }
-        }
+    The model predicts next-day log-return from the last 30 daily returns.
+    Returns are compounded recursively for multi-step forecasting.
+    This avoids the extrapolation failure of absolute-price XGBoost models.
     """
     try:
-        # Load models and data
-        models, scaler, feature_names = _load_xgboost_model(asset)
+        meta = _load_xgboost_model(asset)
+        models = meta.get('models')
+        scaler = meta.get('scaler')
+        feature_names = meta.get('feature_names', [])
+        importance_dict = meta.get('feature_importance', {})
+        mode = meta.get('mode', 'prices')   # 'returns' for new models
+
         features_data = load_all_features()
         df = features_data[asset]
+        close = df['Close'].values
 
-        # Get last prices + features (normalized)
-        last_prices = df['Close'].iloc[-30:].values
-        last_prices_norm = scaler.transform(last_prices.reshape(-1, 1)).flatten()
+        if mode == 'returns':
+            # ── Returns-based forecast (new) ──────────────────────────
+            log_returns = np.log(close[1:] / close[:-1])  # (n-1,)
+            last_returns = log_returns[-30:]               # last 30 returns
+            current_price = float(close[-1])
 
-        # Get current features (limit to feature_names count - 30 for lags)
-        n_feature_cols = len(feature_names) - 30
-        if n_feature_cols > 0:
-            last_features = df.iloc[-1, :n_feature_cols].values
-            # Normalize features (simple z-score)
-            last_features = (last_features - last_features.mean()) / (last_features.std() + 1e-8)
+            forecasts_point, forecasts_lower, forecasts_upper = [], [], []
+
+            for step in range(horizon):
+                X = last_returns.reshape(1, -1)
+                X_scaled = scaler.transform(X)
+
+                r_point = float(models[0.5].predict(X_scaled)[0])
+                r_lower = float(models[0.025].predict(X_scaled)[0])
+                r_upper = float(models[0.975].predict(X_scaled)[0])
+
+                prev = forecasts_point[-1] if forecasts_point else current_price
+                forecasts_point.append(prev * np.exp(r_point))
+                forecasts_lower.append(prev * np.exp(r_lower))
+                forecasts_upper.append(prev * np.exp(r_upper))
+
+                # Advance return window
+                last_returns = np.roll(last_returns, -1)
+                last_returns[-1] = r_point
+
         else:
+            # ── Absolute-price fallback (legacy) ──────────────────────
+            last_prices = close[-30:]
+            last_prices_norm = scaler.transform(last_prices.reshape(-1, 1)).flatten()
             last_features = np.array([])
 
-        # Forecast
-        point, lower, upper, importance = forecast_xgboost_recursive(
-            models, scaler, last_prices_norm, last_features, horizon, feature_names
-        )
+            from gb_models import forecast_xgboost_recursive
+            point, lower, upper, importance_dict = forecast_xgboost_recursive(
+                models, scaler, last_prices_norm, last_features, horizon, feature_names
+            )
+            forecasts_point = point.tolist()
+            forecasts_lower = lower.tolist()
+            forecasts_upper = upper.tolist()
+            current_price = float(close[-1])
 
-        # Generate dates
+        # Generate future dates (skip weekends)
         last_date = pd.Timestamp(df.index[-1])
-        dates = [
-            (last_date + pd.Timedelta(days=i + 1)).strftime('%Y-%m-%d')
-            for i in range(len(point))
-        ]
+        dates = []
+        d = last_date
+        while len(dates) < horizon:
+            d += pd.Timedelta(days=1)
+            if d.weekday() < 5:  # Mon–Fri
+                dates.append(d.strftime('%Y-%m-%d'))
 
-        # Convert importance dict to JSON-serializable format
-        importance_dict = {}
-        if importance:
-            for k, v in importance.items():
-                importance_dict[str(k)] = float(v) if hasattr(v, 'item') else float(v)
+        # Convert importance to JSON-safe dict
+        if importance_dict:
+            importance_dict = {
+                str(k): float(v) if hasattr(v, 'item') else float(v)
+                for k, v in importance_dict.items()
+            }
 
         return {
             "asset": asset,
             "date": str(df.index[-1].date()),
             "method": "xgboost",
-            "forecast": [float(x) for x in point.tolist()[:horizon]],
-            "lower_95": [float(x) for x in lower.tolist()[:horizon]],
-            "upper_95": [float(x) for x in upper.tolist()[:horizon]],
+            "forecast": [float(x) for x in forecasts_point[:horizon]],
+            "lower_95": [float(x) for x in forecasts_lower[:horizon]],
+            "upper_95": [float(x) for x in forecasts_upper[:horizon]],
             "dates": dates[:horizon],
             "feature_importance": importance_dict,
             "model_info": {
-                "type": "gradient boosting (XGBoost)",
-                "n_estimators": 100,
-                "quantiles": [0.025, 0.5, 0.975]
+                "type": "gradient boosting (XGBoost, log-return mode)",
+                "n_estimators": 300,
+                "quantiles": [0.025, 0.5, 0.975],
+                "mode": mode,
             }
         }
 
