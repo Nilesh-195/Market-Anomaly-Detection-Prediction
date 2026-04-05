@@ -1,11 +1,11 @@
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Manrope:wght@400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 html {
-  background-color: #FFFFFF;
+  background-color: #ffffff;
   color-scheme: light;
 }
 
@@ -15,27 +15,27 @@ html {
 
 body {
   margin: 0;
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: 'Manrope', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #FFFFFF;
-  color: #111827;
+  background: #ffffff;
+  color: #0f1f33;
 }
 
 /* Custom scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: #F3F4F6; }
-::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #2563EB; }
+::-webkit-scrollbar-track { background: #edf2f8; }
+::-webkit-scrollbar-thumb { background: #b9c7da; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #1d6fdc; }
 
 a {
   font-weight: 500;
-  color: #2563EB;
+  color: #1d6fdc;
   text-decoration: inherit;
 }
 
 a:hover {
-  color: #1D4ED8;
+  color: #134f9e;
 }
 
 button {
@@ -45,14 +45,14 @@ button {
   font-size: 1em;
   font-weight: 500;
   font-family: inherit;
-  background-color: #FFF;
-  color: #111827;
+  background-color: #fff;
+  color: #0f1f33;
   cursor: pointer;
   transition: border-color 0.25s;
 }
 
 button:hover {
-  border-color: #2563EB;
+  border-color: #1d6fdc;
 }
 
 button:focus,

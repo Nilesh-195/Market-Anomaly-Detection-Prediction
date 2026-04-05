@@ -1,47 +1,91 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle, Loader2, TrendingDown, TrendingUp } from 'lucide-react'
 import {
-  TrendingUp, TrendingDown, Activity, Calendar, BarChart3,
-  ChevronRight, Loader2, AlertTriangle,
-} from 'lucide-react'
+  Area,
+  ComposedChart,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from 'recharts'
+import clsx from 'clsx'
 import { Card } from '../components/ui/Card'
 import { Badge } from '../components/ui/Badge'
-import ForecastChart from '../components/charts/ForecastChart'
-import AttentionHeatmap from '../components/charts/AttentionHeatmap'
 import FeatureImportanceChart from '../components/charts/FeatureImportanceChart'
-import { formatPrice, formatPct, formatDate } from '../utils/formatters'
-import { fetchLstmForecast, fetchTransformerForecast, fetchXgboostForecast, fetchPriceForecast } from '../services/api'
-import clsx from 'clsx'
+import { formatDate, formatPct, formatPrice } from '../utils/formatters'
+import {
+  fetchHistoricalAnomalies,
+  fetchLstmForecast,
+  fetchPriceForecast,
+  fetchTransformerForecast,
+  fetchXgboostForecast,
+} from '../services/api'
 
 const FORECAST_METHODS = [
   { id: 'auto', label: 'Auto (Best)', category: 'Classical' },
   { id: 'naive', label: 'Naive', category: 'Classical' },
   { id: 'arima', label: 'ARIMA', category: 'Classical' },
   { id: 'ses', label: 'Exp. Smoothing', category: 'Classical' },
-  { id: 'holt', label: 'Holt\'s Linear', category: 'Classical' },
+  { id: 'holt', label: "Holt's Linear", category: 'Classical' },
   { id: 'lstm', label: 'LSTM Seq2Seq', category: 'Deep Learning' },
   { id: 'transformer', label: 'Transformer', category: 'Deep Learning' },
   { id: 'xgboost', label: 'XGBoost', category: 'Gradient Boosting' },
 ]
 
+function ForecastTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+
+  const row = payload[0]?.payload
+  return (
+    <div className="min-w-[210px] rounded-xl border border-card-border bg-white p-4 shadow-float">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.14em] text-text-muted">
+        {label === 'Today' ? 'Today' : formatDate(label, 'MMM dd, yyyy')}
+      </div>
+      {row?.historical != null && (
+        <div className="mb-1 flex items-center justify-between text-sm">
+          <span className="text-text-secondary">Historical</span>
+          <span className="font-mono font-semibold text-brand-blue">{formatPrice(row.historical)}</span>
+        </div>
+      )}
+      {row?.forecast != null && (
+        <div className="mb-1 flex items-center justify-between text-sm">
+          <span className="text-text-secondary">Forecast</span>
+          <span className="font-mono font-semibold text-chart-blue">{formatPrice(row.forecast)}</span>
+        </div>
+      )}
+      {row?.lower != null && row?.upper != null && (
+        <div className="mt-2 border-t border-card-border pt-2 text-xs text-text-secondary">
+          95% CI: <span className="font-mono">{formatPrice(row.lower)} to {formatPrice(row.upper)}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function Forecast({ priceForecast: initialPriceForecast, selectedAsset, loading: parentLoading }) {
   const [selectedMethod, setSelectedMethod] = useState('auto')
-  const [priceForecast, setPriceForecast] = useState(initialPriceForecast)
-  const [loading, setLoading] = useState(parentLoading)
+  const [methodForecast, setMethodForecast] = useState(null)
+  const [historyData, setHistoryData] = useState([])
   const [error, setError] = useState(null)
 
-  // Load forecast data when method or asset changes
+  useEffect(() => {
+    if (!selectedAsset) return
+
+    fetchHistoricalAnomalies(selectedAsset, 120)
+      .then((hist) => {
+        setHistoryData((hist?.chart_data ?? []).slice(-90))
+      })
+      .catch(() => setHistoryData([]))
+  }, [selectedAsset])
+
   useEffect(() => {
     if (!selectedAsset) return
 
     if (selectedMethod === 'auto') {
-      setPriceForecast(initialPriceForecast)
-      setLoading(parentLoading)
-      setError(null)
       return
     }
-
-    setLoading(true)
-    setError(null)
 
     let promise
     if (selectedMethod === 'lstm') {
@@ -51,89 +95,80 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
     } else if (selectedMethod === 'xgboost') {
       promise = fetchXgboostForecast(selectedAsset, 30)
     } else {
-      // Classical methods: naive, arima, ses, holt — use the price endpoint with method param
       promise = fetchPriceForecast(selectedAsset, 30, selectedMethod)
     }
 
     promise
-      .then(data => {
-        setPriceForecast(data)
+      .then((data) => {
+        setMethodForecast(data)
         setError(null)
       })
-      .catch(err => {
+      .catch((err) => {
         setError(err?.message || 'Failed to load forecast')
-        if (initialPriceForecast) setPriceForecast(initialPriceForecast)
       })
-      .finally(() => setLoading(false))
-  }, [selectedMethod, selectedAsset])
+  }, [selectedMethod, selectedAsset, initialPriceForecast])
 
-  // Sync when parent's initial forecast data arrives
-  useEffect(() => {
-    if (selectedMethod === 'auto' && initialPriceForecast) {
-      setPriceForecast(initialPriceForecast)
-      setLoading(false)
-      setError(null)
-    }
-  }, [initialPriceForecast])
-
-  // Reflect parent loading state only for 'auto' method
-  useEffect(() => {
-    if (selectedMethod === 'auto') {
-      setLoading(parentLoading)
-    }
-  }, [parentLoading, selectedMethod])
-
-  // Self-fetch fallback: if parent gave no data and finished loading, fetch directly
-  useEffect(() => {
-    if (!parentLoading && !initialPriceForecast && selectedMethod === 'auto' && selectedAsset) {
-      setLoading(true)
-      setError(null)
-      fetchPriceForecast(selectedAsset, 30, 'auto')
-        .then(data => {
-          setPriceForecast(data)
-          setError(null)
-        })
-        .catch(err => {
-          setError(err?.message || 'Failed to load forecast data')
-        })
-        .finally(() => setLoading(false))
-    }
-  }, [parentLoading, initialPriceForecast, selectedAsset, selectedMethod])
+  const priceForecast = selectedMethod === 'auto' ? initialPriceForecast : methodForecast
+  const loading = selectedMethod === 'auto' ? parentLoading : !methodForecast && !error
 
   const currentPrice = priceForecast?.current_price ?? 0
   const forecastValues = priceForecast?.forecast?.values ?? []
-  const forecastDates = priceForecast?.forecast?.dates ?? []
-  const lowerBand = priceForecast?.forecast?.lower_95 ?? []
-  const upperBand = priceForecast?.forecast?.upper_95 ?? []
   const method = priceForecast?.method ?? 'auto'
   const horizon = priceForecast?.horizon ?? 30
   const summary = priceForecast?.summary ?? {}
 
-  // Build chart data
-  const chartData = forecastValues.map((val, i) => ({
-    date: forecastDates[i] || `Day ${i + 1}`,
-    forecast: val,
-    lower: lowerBand[i] ?? val * 0.95,
-    upper: upperBand[i] ?? val * 1.05,
-  }))
+  const methodInfo = FORECAST_METHODS.find((m) => m.id === selectedMethod)
 
-  // Key metrics
+  const chartData = useMemo(() => {
+    const forecastSeries = priceForecast?.forecast ?? {}
+    const values = forecastSeries?.values ?? []
+    const dates = forecastSeries?.dates ?? []
+    const lower = forecastSeries?.lower_95 ?? []
+    const upper = forecastSeries?.upper_95 ?? []
+
+    const historicalRows = historyData.map((point) => ({
+      date: point.date,
+      historical: point.close,
+      forecast: null,
+      lower: null,
+      upper: null,
+    }))
+
+    const forecastRows = values.map((value, idx) => ({
+      date: dates[idx] || `Day ${idx + 1}`,
+      historical: null,
+      forecast: value,
+      lower: lower[idx] ?? value,
+      upper: upper[idx] ?? value,
+    }))
+
+    if (historicalRows.length && forecastRows.length) {
+      forecastRows[0].historical = historicalRows[historicalRows.length - 1].historical
+    }
+
+    return [...historicalRows, ...forecastRows]
+  }, [historyData, priceForecast])
+
+  const yValues = chartData.flatMap((row) => [row.historical, row.forecast, row.lower, row.upper]).filter(Number.isFinite)
+  const yDomain = yValues.length
+    ? [Math.min(...yValues) * 0.985, Math.max(...yValues) * 1.015]
+    : ['auto', 'auto']
+
   const forecast30d = summary.forecast_30d ?? forecastValues[forecastValues.length - 1] ?? currentPrice
   const expectedReturn = summary.expected_return_pct ?? 0
   const forecast1d = forecastValues[0] ?? currentPrice
   const forecast7d = forecastValues[6] ?? forecastValues[forecastValues.length - 1] ?? currentPrice
-
   const isPositive = expectedReturn >= 0
 
   if (loading && !priceForecast) {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Price Forecast</h1>
-          <p className="text-text-secondary text-sm">AI-powered price predictions with confidence intervals</p>
+          <h1 className="text-2xl font-bold text-text-primary">Deep-Dive Forecasting</h1>
+          <p className="text-sm text-text-secondary">Transformer, LSTM, and classical model projection center.</p>
         </div>
-        <div className="flex items-center justify-center h-[400px]">
-          <Loader2 size={32} className="animate-spin text-brand-blue" />
+        <div className="flex h-[360px] items-center justify-center">
+          <Loader2 size={34} className="animate-spin text-brand-blue" />
         </div>
       </div>
     )
@@ -143,11 +178,11 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Price Forecast</h1>
-          <p className="text-text-secondary text-sm">AI-powered price predictions with confidence intervals</p>
+          <h1 className="text-2xl font-bold text-text-primary">Deep-Dive Forecasting</h1>
+          <p className="text-sm text-text-secondary">Transformer, LSTM, and classical model projection center.</p>
         </div>
-        <Card className="bg-red-50 border-red-200">
-          <div className="flex items-center gap-3 text-red-600">
+        <Card className="border-red-200 bg-red-50">
+          <div className="flex items-center gap-3 text-red-700">
             <AlertTriangle size={20} />
             <span>Failed to load forecast data. Please try again.</span>
           </div>
@@ -156,16 +191,13 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
     )
   }
 
-  const methodInfo = FORECAST_METHODS.find(m => m.id === selectedMethod)
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Price Forecast</h1>
-          <p className="text-text-secondary text-sm">
-            {selectedAsset} predictions using {methodInfo?.label || method.toUpperCase()} method
+          <h1 className="text-2xl font-bold text-text-primary">Deep-Dive Forecasting</h1>
+          <p className="text-sm text-text-secondary">
+            {selectedAsset} projection engine using {methodInfo?.label || method.toUpperCase()} with confidence envelope.
           </p>
         </div>
         <Badge variant="blue" className="text-xs">
@@ -173,187 +205,127 @@ export default function Forecast({ priceForecast: initialPriceForecast, selected
         </Badge>
       </div>
 
-      {/* Method Selector */}
-      <Card>
-        <div className="mb-4">
-          <h3 className="text-sm font-medium text-text-primary uppercase tracking-wide mb-3">Forecast Method</h3>
-          <div className="space-y-3">
-            {['Classical', 'Deep Learning', 'Gradient Boosting'].map(category => (
-              <div key={category}>
-                <p className="text-xs text-text-secondary uppercase tracking-wider mb-2">{category}</p>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {FORECAST_METHODS.filter(m => m.category === category).map(method => (
-                    <button
-                      key={method.id}
-                      onClick={() => setSelectedMethod(method.id)}
-                      className={clsx(
-                        'px-3 py-2 rounded-lg text-xs font-medium transition-colors',
-                        selectedMethod === method.id
-                          ? 'bg-brand-blue text-white'
-                          : 'bg-surface hover:bg-surface-alt text-text-secondary hover:text-text-primary'
-                      )}
-                    >
-                      {method.label}
-                    </button>
-                  ))}
-                </div>
+      <Card className="bg-gradient-to-br from-white to-sky-50/50">
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-[0.14em] text-text-primary">Model Selection</h3>
+        <div className="space-y-3">
+          {['Classical', 'Deep Learning', 'Gradient Boosting'].map((category) => (
+            <div key={category}>
+              <p className="mb-2 text-xs uppercase tracking-[0.14em] text-text-muted">{category}</p>
+              <div className="grid grid-cols-2 gap-2 md:grid-cols-4">
+                {FORECAST_METHODS.filter((item) => item.category === category).map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setSelectedMethod(item.id)}
+                    className={clsx(
+                      'rounded-lg px-3 py-2 text-xs font-semibold transition-all',
+                      selectedMethod === item.id
+                        ? 'bg-brand-blue text-white shadow-glass'
+                        : 'border border-card-border bg-white text-text-secondary hover:border-brand-blue/40 hover:text-text-primary'
+                    )}
+                  >
+                    {item.label}
+                  </button>
+                ))}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       </Card>
 
-      {/* Key Metrics Row */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <Card>
-          <div className="text-text-secondary text-[11px] uppercase tracking-wider mb-2">Current Price</div>
-          <div className="font-mono font-bold text-2xl text-text-primary">
-            {formatPrice(currentPrice)}
-          </div>
+          <div className="mb-2 text-[11px] uppercase tracking-[0.14em] text-text-muted">Current Price</div>
+          <div className="font-mono text-2xl font-bold text-text-primary">{formatPrice(currentPrice)}</div>
         </Card>
-
         <Card>
-          <div className="text-text-secondary text-[11px] uppercase tracking-wider mb-2">Tomorrow</div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono font-bold text-2xl text-text-primary">
-              {formatPrice(forecast1d)}
-            </span>
-            <span className={clsx(
-              'text-sm font-mono',
-              forecast1d >= currentPrice ? 'text-risk-normal' : 'text-risk-extreme'
-            )}>
-              {formatPct(((forecast1d / currentPrice) - 1) * 100)}
-            </span>
-          </div>
+          <div className="mb-2 text-[11px] uppercase tracking-[0.14em] text-text-muted">Tomorrow</div>
+          <div className="font-mono text-2xl font-bold text-text-primary">{formatPrice(forecast1d)}</div>
         </Card>
-
         <Card>
-          <div className="text-text-secondary text-[11px] uppercase tracking-wider mb-2">7-Day</div>
-          <div className="flex items-baseline gap-2">
-            <span className="font-mono font-bold text-2xl text-text-primary">
-              {formatPrice(forecast7d)}
-            </span>
-            <span className={clsx(
-              'text-sm font-mono',
-              forecast7d >= currentPrice ? 'text-risk-normal' : 'text-risk-extreme'
-            )}>
-              {formatPct(((forecast7d / currentPrice) - 1) * 100)}
-            </span>
-          </div>
+          <div className="mb-2 text-[11px] uppercase tracking-[0.14em] text-text-muted">7-Day Target</div>
+          <div className="font-mono text-2xl font-bold text-text-primary">{formatPrice(forecast7d)}</div>
         </Card>
-
-        <Card className={isPositive ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'}>
-          <div className="text-text-secondary text-[11px] uppercase tracking-wider mb-2">30-Day Outlook</div>
-          <div className="flex items-baseline gap-2">
-            <span className={clsx(
-              'font-mono font-bold text-2xl',
-              isPositive ? 'text-risk-normal' : 'text-risk-extreme'
-            )}>
-              {formatPct(expectedReturn)}
-            </span>
-            {isPositive ? <TrendingUp size={20} className="text-risk-normal" /> : <TrendingDown size={20} className="text-risk-extreme" />}
+        <Card className={isPositive ? 'border-emerald-200 bg-emerald-50' : 'border-red-200 bg-red-50'}>
+          <div className="mb-2 text-[11px] uppercase tracking-[0.14em] text-text-muted">30-Day Outlook</div>
+          <div className={clsx('flex items-center gap-2 font-mono text-2xl font-bold', isPositive ? 'text-emerald-700' : 'text-red-700')}>
+            <span>{formatPct(expectedReturn)}</span>
+            {isPositive ? <TrendingUp size={18} /> : <TrendingDown size={18} />}
           </div>
-          <div className="text-xs text-text-secondary mt-1">
-            Target: {formatPrice(forecast30d)}
-          </div>
+          <div className="mt-1 text-xs text-text-secondary">Target {formatPrice(forecast30d)}</div>
         </Card>
       </div>
 
-      {/* Forecast Chart */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
+        <div className="mb-4 flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-text-primary">Price Forecast</h2>
-            <p className="text-text-secondary text-sm">Predicted values with 95% confidence interval</p>
+            <h2 className="text-lg font-semibold text-text-primary">Master Forecast Chart</h2>
+            <p className="text-sm text-text-secondary">Historical trend, predicted trajectory, and 95% confidence interval.</p>
           </div>
-          <div className="flex items-center gap-4 text-xs text-text-secondary">
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-0.5 bg-brand-blue rounded"></span>
-              Forecast
-            </span>
-            <span className="flex items-center gap-1">
-              <span className="w-3 h-3 bg-brand-blue/20 rounded"></span>
-              95% CI
-            </span>
+          <div className="text-xs text-text-secondary">
+            <span className="mr-4 inline-flex items-center gap-1"><span className="h-0.5 w-4 bg-brand-blue" />History</span>
+            <span className="mr-4 inline-flex items-center gap-1"><span className="h-0.5 w-4 border-t-2 border-dashed border-chart-blue" />Forecast</span>
+            <span className="inline-flex items-center gap-1"><span className="h-2 w-4 rounded bg-chart-blue/20" />95% CI</span>
           </div>
         </div>
-        <ForecastChart data={chartData} currentPrice={currentPrice} />
+
+        <ResponsiveContainer width="100%" height={360}>
+          <ComposedChart data={chartData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+            <defs>
+              <linearGradient id="forecastBand" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#1D6FDC" stopOpacity={0.24} />
+                <stop offset="100%" stopColor="#1D6FDC" stopOpacity={0.05} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid stroke="#DBE4EF" strokeDasharray="4 4" vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickFormatter={(value) => (value === 'Today' ? value : formatDate(value))}
+              tick={{ fill: '#7C8BA1', fontSize: 11 }}
+              tickLine={false}
+              axisLine={false}
+              interval="preserveStartEnd"
+            />
+            <YAxis
+              domain={yDomain}
+              tick={{ fill: '#7C8BA1', fontSize: 11 }}
+              tickFormatter={(value) => formatPrice(value)}
+              tickLine={false}
+              axisLine={false}
+              width={80}
+            />
+            <Tooltip content={<ForecastTooltip />} />
+
+            <Area type="monotone" dataKey="upper" stroke="none" fill="url(#forecastBand)" connectNulls />
+            <Area type="monotone" dataKey="lower" stroke="none" fill="#ffffff" connectNulls />
+
+            <Line
+              type="monotone"
+              dataKey="historical"
+              stroke="#0B3A63"
+              strokeWidth={2.6}
+              dot={false}
+              connectNulls
+              name="Historical"
+            />
+            <Line
+              type="monotone"
+              dataKey="forecast"
+              stroke="#1D6FDC"
+              strokeWidth={2.4}
+              strokeDasharray="6 4"
+              dot={false}
+              connectNulls
+              name="Forecast"
+            />
+          </ComposedChart>
+        </ResponsiveContainer>
       </Card>
 
-      {/* Method Info */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <Card>
-          <h3 className="text-lg font-semibold text-text-primary mb-4">Forecast Method</h3>
-          <div className="space-y-3">
-            <div className="flex items-center justify-between py-2 border-b border-card-border">
-              <span className="text-text-secondary text-sm">Model</span>
-              <Badge variant="blue">{methodInfo?.label || method.toUpperCase()}</Badge>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b border-card-border">
-              <span className="text-text-secondary text-sm">Category</span>
-              <Badge variant="blue" className="text-xs bg-blue-600/20 text-blue-300 border-blue-400">{methodInfo?.category || 'Unknown'}</Badge>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b border-card-border">
-              <span className="text-text-secondary text-sm">Horizon</span>
-              <span className="font-mono text-text-primary">{horizon} days</span>
-            </div>
-            <div className="flex items-center justify-between py-2 border-b border-card-border">
-              <span className="text-text-secondary text-sm">Confidence Level</span>
-              <span className="font-mono text-text-primary">95%</span>
-            </div>
-            {priceForecast?.model_info?.aic && (
-              <div className="flex items-center justify-between py-2">
-                <span className="text-text-secondary text-sm">AIC Score</span>
-                <span className="font-mono text-text-primary">
-                  {priceForecast.model_info.aic.toFixed(2)}
-                </span>
-              </div>
-            )}
-            {priceForecast?.model_info?.type && (
-              <div className="flex items-center justify-between py-2 pt-2">
-                <span className="text-text-secondary text-sm">Model Type</span>
-                <span className="font-mono text-xs text-text-secondary">{priceForecast.model_info.type}</span>
-              </div>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <h3 className="text-lg font-semibold text-text-primary mb-4">Prediction Summary</h3>
-          <div className="space-y-4">
-            <div className="p-3 bg-surface rounded-lg">
-              <div className="text-text-secondary text-xs mb-1">Short-term (1-7 days)</div>
-              <div className={clsx(
-                'font-medium',
-                forecast7d >= currentPrice ? 'text-risk-normal' : 'text-risk-extreme'
-              )}>
-                {forecast7d >= currentPrice ? 'Bullish' : 'Bearish'} — Expecting {formatPct(((forecast7d / currentPrice) - 1) * 100)} move
-              </div>
-            </div>
-            <div className="p-3 bg-surface rounded-lg">
-              <div className="text-text-secondary text-xs mb-1">Medium-term (30 days)</div>
-              <div className={clsx(
-                'font-medium',
-                isPositive ? 'text-risk-normal' : 'text-risk-extreme'
-              )}>
-                {isPositive ? 'Bullish' : 'Bearish'} — Expecting {formatPct(expectedReturn)} return
-              </div>
-            </div>
-            <div className="text-xs text-text-muted mt-2">
-              * Forecasts are probabilistic estimates. Actual returns may vary.
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* LSTM Attention Weights */}
-      {selectedMethod === 'lstm' && priceForecast?.attention_weights && (
-        <AttentionHeatmap weights={priceForecast.attention_weights} title="LSTM Attention Weights" />
-      )}
-
-      {/* XGBoost Feature Importance */}
-      {selectedMethod === 'xgboost' && priceForecast?.feature_importance && (
-        <FeatureImportanceChart importance={priceForecast.feature_importance} title="XGBoost Feature Importance" />
+      {(selectedMethod === 'xgboost' || selectedMethod === 'transformer') && priceForecast?.feature_importance && (
+        <FeatureImportanceChart
+          importance={priceForecast.feature_importance}
+          title={selectedMethod === 'transformer' ? 'Variable Selection Viewer' : 'Feature Influence Viewer'}
+        />
       )}
     </div>
   )

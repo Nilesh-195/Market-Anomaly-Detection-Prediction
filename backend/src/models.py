@@ -28,6 +28,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.ensemble import IsolationForest
 from sklearn.preprocessing import StandardScaler
+from features import make_sequences
 
 warnings.filterwarnings("ignore")
 
@@ -123,10 +124,6 @@ class LSTMAutoencoder(nn.Module):
         return self.dec_output(d)
 
 
-def _make_sequences(X, window):
-    return np.array([X[i: i + window] for i in range(len(X) - window + 1)])
-
-
 def train_lstm_autoencoder(df, name):
     torch.manual_seed(42)
     train_df = df.loc[:TRAIN_END, FEATURE_COLS].dropna()
@@ -134,7 +131,7 @@ def train_lstm_autoencoder(df, name):
 
     scaler   = StandardScaler()
     X_scaled = scaler.fit_transform(train_df).astype(np.float32)
-    X_seq    = _make_sequences(X_scaled, LSTM_WINDOW)
+    X_seq    = make_sequences(X_scaled, LSTM_WINDOW)
     log.info(f"[{name}] LSTM sequences: {X_seq.shape}")
     n_features = X_seq.shape[2]
 
@@ -192,7 +189,7 @@ def train_lstm_autoencoder(df, name):
 
 def lstm_anomaly_score(df, model, scaler, threshold):
     X_scaled = scaler.transform(df[FEATURE_COLS].fillna(0)).astype(np.float32)
-    X_seq    = _make_sequences(X_scaled, LSTM_WINDOW)
+    X_seq    = make_sequences(X_scaled, LSTM_WINDOW)
     model.eval()
     with torch.no_grad():
         X_pred = model(torch.tensor(X_seq).to(DEVICE)).cpu().numpy()
@@ -240,7 +237,7 @@ def prophet_anomaly_score(df, model, residual_std):
 # ══════════════════════════════════════════════════════════════════════════════
 # ENSEMBLE
 # ══════════════════════════════════════════════════════════════════════════════
-WEIGHTS = {"zscore": 0.15, "iforest": 0.25, "lstm": 0.40, "prophet": 0.20}
+WEIGHTS = {"zscore": 0.10, "iforest": 0.35, "lstm": 0.40, "prophet": 0.15}
 
 
 def ensemble_score(zscore_s, iforest_s, lstm_s, prophet_s):

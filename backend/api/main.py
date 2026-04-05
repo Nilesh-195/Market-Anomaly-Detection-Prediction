@@ -57,7 +57,8 @@ from arima_models import arima_forecast, sarima_forecast
 from var_model import analyze_var, load_multi_asset_data
 from forecast_evaluation import evaluate_all_methods
 from features import load_all_features
-from forecast_dl import lstm_seq2seq_forecast, transformer_forecast, xgboost_forecast  # Phase 3 DL
+from dl_models import lstm_seq2seq_forecast, transformer_forecast
+from gb_models import xgboost_forecast  # Phase 3 DL
 
 # Import anomaly detection (LEGACY - SECONDARY)
 from predict import (
@@ -720,7 +721,12 @@ def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
         # Generate forecast with selected method
         if method in ["naive", "mean", "drift"]:
             result_dict = forecast_naive(a, horizon)
-            result = result_dict["methods"][method]
+            naive_result = result_dict["methods"][method]
+            result = {
+                "forecast": pd.Series(naive_result["forecast"]),
+                "lower": pd.Series(naive_result["lower_95"]),
+                "upper": pd.Series(naive_result["upper_95"]),
+            }
             model_info = {"method": method, "category": "naive"}
         elif method in ["ses", "holt"]:
             result_dict = forecast_exponential(a, horizon, method=method)
@@ -768,12 +774,21 @@ def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
             model_info = result_dict.get("model_info", {})
             model_info["category"] = "arima"
 
-        return {
+        # Pass through visualization payload directly into response roots
+        attention_weights = result_dict.get("attention_weights")
+        feature_importance = result_dict.get("feature_importance")
+        # For Phase 3 Transformer, feature_weights acts as feature_importance
+        if method == "transformer" and "feature_weights" in result_dict:
+            feature_importance = result_dict["feature_weights"]
+
+        response_payload = {
             "asset": a,
             "current_price": float(train.iloc[-1]),
             "horizon": horizon,
             "method": method,
             "model_info": model_info,
+            "attention_weights": attention_weights,
+            "feature_importance": feature_importance,
             "forecast": {
                 "values": result["forecast"].tolist() if hasattr(result["forecast"], "tolist") else result["forecast"],
                 "lower_95": result["lower"].tolist() if hasattr(result["lower"], "tolist") else result["lower"],
@@ -785,6 +800,8 @@ def forecast_price(asset: str, horizon: int = 30, method: str = "auto"):
                 "expected_return_pct": round(((float(result["forecast"].iloc[-1] if hasattr(result["forecast"], "iloc") else result["forecast"][-1]) / float(train.iloc[-1])) - 1) * 100, 2),
             },
         }
+
+        return response_payload
 
     except Exception as e:
         log.error(f"Price forecast error for {a}: {e}")

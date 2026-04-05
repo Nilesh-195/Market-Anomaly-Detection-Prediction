@@ -21,7 +21,7 @@ export default function App() {
     comparison, evaluation, summary,
     apiOnline, loading, error,
     lastUpdated, refresh,
-  } = useMarketData(selectedAsset)
+  } = useMarketData(selectedAsset, activePage)
 
   useAutoRefresh(refresh)
 

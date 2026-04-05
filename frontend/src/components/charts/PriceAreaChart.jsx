@@ -1,6 +1,6 @@
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceDot,
+  Tooltip, ResponsiveContainer, ReferenceArea,
 } from 'recharts'
 import { formatDate, formatPrice, formatScore } from '../../utils/formatters'
 import { getRiskColor } from '../../utils/riskHelpers'
@@ -18,24 +18,26 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
   return (
-    <div className="bg-card-bg border border-card-border rounded-xl p-3 shadow-2xl min-w-[180px]">
-      <div className="text-[#64748B] text-xs mb-2">{formatDate(label, 'MMM dd, yyyy')}</div>
-      {payload.map((p, i) => (
-        <div key={i} className="flex justify-between gap-4 text-xs">
-          <span className="text-[#64748B]">{p.name}</span>
-          <span className="font-mono font-medium" style={{ color: p.color }}>
-            {p.name === 'Price' ? formatPrice(p.value) : formatScore(p.value)}
-          </span>
-        </div>
-      ))}
-      {d?.risk_score != null && (
-        <div className="flex justify-between gap-4 text-xs mt-1 pt-1 border-t border-card-border">
-          <span className="text-[#64748B]">Risk</span>
-          <span className="font-mono font-medium" style={{ color: getRiskColor(d.risk_score) }}>
-            {formatScore(d.risk_score)}
-          </span>
-        </div>
-      )}
+    <div className="bg-white border border-card-border rounded-xl p-4 shadow-float animate-float-up min-w-[200px]">
+      <div className="text-text-secondary text-xs uppercase tracking-wider mb-3 font-semibold">{formatDate(label, 'MMM dd, yyyy')}</div>
+      <div className="space-y-2">
+        {payload.map((p, i) => (
+          <div key={i} className="flex justify-between items-center gap-6 text-sm border-b border-card-border pb-2">
+            <span className="text-text-secondary">{p.name}</span>
+            <span className="font-mono font-bold text-base" style={{ color: p.color }}>
+              {p.name === 'Price' ? formatPrice(p.value) : formatScore(p.value)}
+            </span>
+          </div>
+        ))}
+        {d?.risk_score != null && (
+          <div className="flex justify-between items-center gap-6 text-xs text-text-muted pt-1">
+            <span className="uppercase tracking-wider">Risk Score</span>
+            <span className="font-mono font-medium" style={{ color: getRiskColor(d.risk_score) }}>
+              {formatScore(d.risk_score)}
+            </span>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -67,21 +69,28 @@ export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
           tickFormatter={formatAxisPrice}
           tick={{ fill: COLOURS.textSecondary, fontSize: 11, fontFamily: 'monospace' }}
           axisLine={false} tickLine={false} width={64}
+          domain={['auto', 'auto']}
         />
         <Tooltip content={<CustomTooltip />} />
-        <Area
-          type="monotone" dataKey="close" name="Price"
-          stroke={COLOURS.chartBlue} strokeWidth={1.5}
-          fill="url(#priceGrad)" dot={false} activeDot={{ r: 4 }}
-          animationDuration={800}
-        />
+        
+        {/* Draw Anomaly Bounds FIRST so area lines go over them */}
         {anomalyDots.map((pt, i) => (
-          <ReferenceDot
-            key={i} x={pt.date} y={pt.close}
-            r={4} fill={COLOURS.riskExtreme}
-            stroke={COLOURS.cardBg} strokeWidth={2}
+          <ReferenceArea
+            key={`anomaly-${i}`}
+            x1={pt.date}
+            x2={pt.date}
+            fill={COLOURS.riskExtreme}
+            fillOpacity={0.15}
           />
         ))}
+
+        <Area
+          type="monotone" dataKey="close" name="Price"
+          stroke={COLOURS.chartBlue} strokeWidth={2.5}
+          fill="url(#priceGrad)" dot={false} 
+          activeDot={{ r: 6, fill: COLOURS.chartBlue, stroke: '#fff', strokeWidth: 2, className: 'shadow-glass' }}
+          animationDuration={1200}
+        />
       </AreaChart>
     </ResponsiveContainer>
   )

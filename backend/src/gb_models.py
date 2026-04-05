@@ -18,6 +18,15 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+import pickle
+from pathlib import Path
+import logging
+from features import load_all_features
+
+MODEL_DIR = Path(__file__).parent.parent / "models"
+logger = logging.getLogger(__name__)
+
+
 try:
     # SHAP has compatibility issues on some systems; use built-in feature importance instead
     # import shap
@@ -248,3 +257,145 @@ def forecast_xgboost_recursive(
             pass
 
     return forecast_point, forecast_lower, forecast_upper, importance
+
+
+def _load_xgboost_model(asset):
+    """Load XGBoost models. Returns full meta dict."""
+    meta_path = MODEL_DIR / asset / "xgboost_meta.pkl"
+    if not meta_path.exists():
+        raise FileNotFoundError(f"XGBoost meta not found: {meta_path}")
+    with open(meta_path, 'rb') as f:
+        meta = pickle.load(f)
+    return meta
+
+
+
+def xgboost_forecast(asset, horizon=30):
+    """Generate XGBoost forecast using log-return compounding.
+
+    The model predicts next-day log-return from the last 30 daily returns.
+    Returns are compounded recursively for multi-step forecasting.
+    This avoids the extrapolation failure of absolute-price XGBoost models.
+    """
+    try:
+        meta = _load_xgboost_model(asset)
+        models = meta.get('models')
+        scaler = meta.get('scaler')
+        feature_names = meta.get('feature_names', [])
+        importance_dict = meta.get('feature_importance', {})
+        mode = meta.get('mode', 'prices')   # 'returns' for new models
+
+        features_data = load_all_features()
+        df = features_data[asset]
+        close = df['Close'].values
+
+        def _anchor_to_spot(point_path, lower_path, upper_path, spot_price, max_gap_pct=15.0):
+            """Rebase a forecast path to current spot if first point is implausibly far.
+
+            Legacy absolute-price models can drift in level over long histories.
+            This keeps the model-implied trajectory shape while anchoring the
+            level to current market price.
+            """
+            if len(point_path) == 0 or spot_price <= 0:
+                return point_path, lower_path, upper_path
+
+            first = float(point_path[0])
+            if first <= 0:
+                return point_path, lower_path, upper_path
+
+            gap_pct = abs(first / float(spot_price) - 1.0) * 100.0
+            if gap_pct <= max_gap_pct:
+                return point_path, lower_path, upper_path
+
+            base = first
+            point_adj = [float(spot_price) * (float(v) / base) for v in point_path]
+            lower_adj = [float(spot_price) * (float(v) / base) for v in lower_path]
+            upper_adj = [float(spot_price) * (float(v) / base) for v in upper_path]
+            return point_adj, lower_adj, upper_adj
+
+        if mode == 'returns':
+            # ── Returns-based forecast (new) ──────────────────────────
+            log_returns = np.log(close[1:] / close[:-1])  # (n-1,)
+            last_returns = log_returns[-30:]               # last 30 returns
+            current_price = float(close[-1])
+
+            forecasts_point, forecasts_lower, forecasts_upper = [], [], []
+
+            for step in range(horizon):
+                X = last_returns.reshape(1, -1)
+                X_scaled = scaler.transform(X)
+
+                r_point = float(models[0.5].predict(X_scaled)[0])
+                r_lower = float(models[0.025].predict(X_scaled)[0])
+                r_upper = float(models[0.975].predict(X_scaled)[0])
+
+                prev = forecasts_point[-1] if forecasts_point else current_price
+                forecasts_point.append(prev * np.exp(r_point))
+                forecasts_lower.append(prev * np.exp(r_lower))
+                forecasts_upper.append(prev * np.exp(r_upper))
+
+                # Advance return window
+                last_returns = np.roll(last_returns, -1)
+                last_returns[-1] = r_point
+
+        else:
+            # ── Absolute-price fallback (legacy) ──────────────────────
+            last_prices = close[-30:]
+            last_prices_norm = scaler.transform(last_prices.reshape(-1, 1)).flatten()
+            lag_feature_count = 30
+            extra_feature_names = feature_names[lag_feature_count:] if len(feature_names) > lag_feature_count else []
+            latest_row = df.iloc[-1].to_dict()
+            last_features = np.array([
+                float(latest_row.get(name, 0.0)) for name in extra_feature_names
+            ], dtype=float)
+
+            from gb_models import forecast_xgboost_recursive
+            point, lower, upper, importance_dict = forecast_xgboost_recursive(
+                models, scaler, last_prices_norm, last_features, horizon, feature_names
+            )
+            forecasts_point = point.tolist()
+            forecasts_lower = lower.tolist()
+            forecasts_upper = upper.tolist()
+            current_price = float(close[-1])
+
+            # Legacy model safety: re-anchor level if it drifts too far from spot.
+            forecasts_point, forecasts_lower, forecasts_upper = _anchor_to_spot(
+                forecasts_point, forecasts_lower, forecasts_upper, current_price, max_gap_pct=15.0
+            )
+
+        # Generate future dates (skip weekends)
+        last_date = pd.Timestamp(df.index[-1])
+        dates = []
+        d = last_date
+        while len(dates) < horizon:
+            d += pd.Timedelta(days=1)
+            if d.weekday() < 5:  # Mon–Fri
+                dates.append(d.strftime('%Y-%m-%d'))
+
+        # Convert importance to JSON-safe dict
+        if importance_dict:
+            importance_dict = {
+                str(k): float(v) if hasattr(v, 'item') else float(v)
+                for k, v in importance_dict.items()
+            }
+
+        return {
+            "asset": asset,
+            "date": str(df.index[-1].date()),
+            "method": "xgboost",
+            "forecast": [float(x) for x in forecasts_point[:horizon]],
+            "lower_95": [float(x) for x in forecasts_lower[:horizon]],
+            "upper_95": [float(x) for x in forecasts_upper[:horizon]],
+            "dates": dates[:horizon],
+            "feature_importance": importance_dict,
+            "model_info": {
+                "type": "gradient boosting (XGBoost, log-return mode)",
+                "n_estimators": 300,
+                "quantiles": [0.025, 0.5, 0.975],
+                "mode": mode,
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"XGBoost forecast error for {asset}: {e}")
+        raise

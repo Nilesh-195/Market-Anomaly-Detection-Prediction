@@ -46,6 +46,7 @@ import matplotlib.pyplot as plt
 from statsmodels.tsa.stattools import acf, pacf
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+from features import ASSETS
 
 warnings.filterwarnings("ignore")
 
@@ -62,9 +63,6 @@ ROOT_DIR      = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = ROOT_DIR / "backend" / "data" / "processed"
 RESULTS_DIR   = ROOT_DIR / "backend" / "results" / "acf_pacf"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-ASSETS = ["SP500", "VIX", "BTC", "GOLD", "NASDAQ", "TESLA"]
-
 
 # ── ACF Computation ────────────────────────────────────────────────────────────
 def compute_acf(

@@ -12,6 +12,7 @@ build/
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb_checkpoints
+backend/notebooks/outputs/
 
 # Models (large binary artifacts — retrain locally)
 backend/models/*/isolation_forest.pkl
@@ -31,3 +32,4 @@ frontend/.env
 # OS
 .DS_Store
 Thumbs.db
+logs/

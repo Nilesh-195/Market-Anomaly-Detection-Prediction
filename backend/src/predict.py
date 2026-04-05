@@ -41,9 +41,7 @@ from models import (
     lstm_anomaly_score, prophet_anomaly_score,
     ensemble_score, risk_label,
 )
-from features import load_all_features
-
-ASSETS = ["SP500", "VIX", "BTC", "GOLD", "NASDAQ", "TESLA"]
+from features import ASSETS, load_all_features
 
 
 # ── 1. Current Analysis ────────────────────────────────────────────────────────

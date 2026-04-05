@@ -1,21 +1,25 @@
-/**
- * Regime.jsx — Phase 3 Addition
- * HMM Market Regime Timeline and Statistics
- */
-import { useState, useEffect } from 'react'
-import { Activity, TrendingUp, TrendingDown, AlertTriangle, BarChart3 } from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import KPICard from '../components/cards/KPICard'
-import { API_BASE } from '../constants/config'
-import {
-  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine,
-} from 'recharts'
+import { useEffect, useMemo, useState } from 'react'
+import { Activity, AlertTriangle, TrendingDown, TrendingUp } from 'lucide-react'
 import clsx from 'clsx'
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ReferenceArea,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
+import { Card } from '../components/ui/Card'
+import { API_BASE } from '../constants/config'
+import { formatDate } from '../utils/formatters'
 
 const REGIME_COLORS = {
-  bull: { bg: 'rgba(34, 197, 94, 0.15)', border: 'rgb(34, 197, 94)', text: 'text-green-500' },
-  bear: { bg: 'rgba(251, 191, 36, 0.15)', border: 'rgb(251, 191, 36)', text: 'text-amber-500' },
-  crisis: { bg: 'rgba(239, 68, 68, 0.15)', border: 'rgb(239, 68, 68)', text: 'text-red-500' },
+  bull: { fill: 'rgba(16, 185, 129, 0.12)', text: 'text-emerald-700', pill: 'bg-emerald-50 border-emerald-200 text-emerald-700' },
+  bear: { fill: 'rgba(245, 158, 11, 0.12)', text: 'text-amber-700', pill: 'bg-amber-50 border-amber-200 text-amber-700' },
+  crisis: { fill: 'rgba(239, 68, 68, 0.14)', text: 'text-red-700', pill: 'bg-red-50 border-red-200 text-red-700' },
 }
 
 const REGIME_ICONS = {
@@ -24,17 +28,35 @@ const REGIME_ICONS = {
   crisis: AlertTriangle,
 }
 
+function RegimeTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  const row = payload[0]?.payload
+  return (
+    <div className="min-w-[180px] rounded-xl border border-card-border bg-white p-3 shadow-float">
+      <div className="text-xs font-semibold uppercase tracking-[0.12em] text-text-muted">
+        {formatDate(label, 'MMM dd, yyyy')}
+      </div>
+      <div className="mt-2 flex items-center justify-between text-sm">
+        <span className="text-text-secondary">Score</span>
+        <span className="font-mono font-semibold text-brand-blue">{row?.score?.toFixed(1)}</span>
+      </div>
+      <div className="mt-1 text-xs font-semibold uppercase tracking-[0.08em] text-text-secondary">
+        Regime: {row?.regime}
+      </div>
+    </div>
+  )
+}
+
 export default function Regime({ asset, loading: parentLoading }) {
   const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     if (!asset) return
-    setLoading(true)
+
     fetch(`${API_BASE}/anomaly/regime/${asset}`)
-      .then(res => res.json())
-      .then(json => {
+      .then((res) => res.json())
+      .then((json) => {
         if (json.error) {
           setError(json.error)
         } else {
@@ -42,114 +64,96 @@ export default function Regime({ asset, loading: parentLoading }) {
           setError(null)
         }
       })
-      .catch(err => setError(err.message))
-      .finally(() => setLoading(false))
+      .catch((err) => setError(err.message))
   }, [asset])
+
+  const isLoading = !data || parentLoading
+  const current = data?.current_regime ?? 'unknown'
+  const stats = data?.regime_stats ?? {}
+  const avgReturns = data?.avg_returns ?? {}
+  const transitions = data?.transitions ?? {}
+  const timeline = (data?.timeline ?? []).slice(-252)
+
+  const regimePeriods = useMemo(() => {
+    const periods = []
+    let currentPeriod = null
+
+    timeline.forEach((row, index) => {
+      if (!currentPeriod || currentPeriod.regime !== row.regime) {
+        if (currentPeriod) {
+          currentPeriod.end = timeline[index - 1]?.date
+          periods.push(currentPeriod)
+        }
+        currentPeriod = { regime: row.regime, start: row.date, end: row.date }
+      }
+    })
+
+    if (currentPeriod) {
+      currentPeriod.end = timeline[timeline.length - 1]?.date
+      periods.push(currentPeriod)
+    }
+
+    return periods
+  }, [timeline])
+
+  const scoreValues = timeline.map((row) => row.score).filter(Number.isFinite)
+  const yDomain = scoreValues.length
+    ? [Math.min(...scoreValues) * 0.94, Math.max(...scoreValues) * 1.06]
+    : ['auto', 'auto']
+
+  const CurrentIcon = REGIME_ICONS[current] ?? Activity
 
   if (error) {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Market Regime Analysis</h1>
-          <p className="text-text-secondary text-sm">HMM-based market state detection</p>
+          <h1 className="text-2xl font-bold text-text-primary">Market Regime Identification</h1>
+          <p className="text-sm text-text-secondary">HMM-driven market state timeline.</p>
         </div>
         <Card>
-          <div className="text-center py-8 text-text-secondary">
-            <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-amber-500" />
+          <div className="py-8 text-center text-text-secondary">
+            <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-amber-500" />
             <p>{error}</p>
-            <p className="text-sm mt-2">Run Phase 2 training to enable regime detection.</p>
           </div>
         </Card>
       </div>
     )
   }
 
-  const isLoading = loading || parentLoading
-  const current = data?.current_regime ?? 'unknown'
-  const stats = data?.regime_stats ?? {}
-  const avgReturns = data?.avg_returns ?? {}
-  const transitions = data?.transitions ?? {}
-  const timeline = data?.timeline ?? []
-
-  // Prepare chart data (last 252 trading days ~ 1 year)
-  const chartData = timeline.slice(-252).map(d => ({
-    date: d.date,
-    score: d.score,
-    regime: d.regime,
-  }))
-
-  // Calculate regime periods for color bands
-  const regimePeriods = []
-  let currentPeriod = null
-  chartData.forEach((d, i) => {
-    if (!currentPeriod || currentPeriod.regime !== d.regime) {
-      if (currentPeriod) {
-        currentPeriod.endIdx = i - 1
-        regimePeriods.push(currentPeriod)
-      }
-      currentPeriod = { regime: d.regime, startIdx: i, endIdx: i }
-    }
-  })
-  if (currentPeriod) {
-    currentPeriod.endIdx = chartData.length - 1
-    regimePeriods.push(currentPeriod)
-  }
-
-  const CurrentIcon = REGIME_ICONS[current] ?? Activity
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Market Regime Analysis</h1>
-          <p className="text-text-secondary text-sm">HMM-based market state detection for {asset}</p>
+          <h1 className="text-2xl font-bold text-text-primary">Market Regime Identification</h1>
+          <p className="text-sm text-text-secondary">HMM market state timeline for {asset}.</p>
         </div>
         {!isLoading && (
-          <div className={clsx(
-            'flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium',
-            current === 'bull' && 'bg-green-500/20 text-green-400',
-            current === 'bear' && 'bg-amber-500/20 text-amber-400',
-            current === 'crisis' && 'bg-red-500/20 text-red-400',
-          )}>
+          <div className={clsx('inline-flex items-center gap-2 rounded-full border px-4 py-2 text-sm font-semibold uppercase', REGIME_COLORS[current]?.pill)}>
             <CurrentIcon size={16} />
-            <span className="uppercase">{current} Regime</span>
+            {current}
           </div>
         )}
       </div>
 
-      {/* Regime Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {['bull', 'bear', 'crisis'].map((regime, idx) => {
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        {['bull', 'bear', 'crisis'].map((regime) => {
           const stat = stats[regime] ?? { count: 0, pct: 0 }
           const avgRet = avgReturns[regime] ?? 0
           const Icon = REGIME_ICONS[regime]
+
           return (
             <Card key={regime}>
               <div className="flex items-start justify-between">
                 <div>
-                  <p className="text-text-secondary text-sm uppercase tracking-wide mb-1">{regime} Regime</p>
+                  <p className="text-xs uppercase tracking-[0.14em] text-text-muted">{regime} regime</p>
                   <p className="font-mono text-2xl font-bold text-text-primary">{stat.pct?.toFixed(1)}%</p>
-                  <p className="text-text-secondary text-sm mt-1">{stat.count?.toLocaleString()} trading days</p>
-                  <p className={clsx(
-                    'text-sm mt-2 font-mono',
-                    avgRet >= 0 ? 'text-green-400' : 'text-red-400'
-                  )}>
-                    Avg: {avgRet >= 0 ? '+' : ''}{avgRet.toFixed(4)}%/day
+                  <p className="text-xs text-text-secondary">{stat.count?.toLocaleString()} trading days</p>
+                  <p className={clsx('mt-2 text-xs font-mono', avgRet >= 0 ? 'text-emerald-700' : 'text-red-700')}>
+                    Avg {avgRet >= 0 ? '+' : ''}{avgRet.toFixed(4)}% / day
                   </p>
                 </div>
-                <div className={clsx(
-                  'p-3 rounded-lg',
-                  regime === 'bull' && 'bg-green-500/20',
-                  regime === 'bear' && 'bg-amber-500/20',
-                  regime === 'crisis' && 'bg-red-500/20',
-                )}>
-                  <Icon className={clsx(
-                    'w-6 h-6',
-                    regime === 'bull' && 'text-green-400',
-                    regime === 'bear' && 'text-amber-400',
-                    regime === 'crisis' && 'text-red-400',
-                  )} />
+                <div className={clsx('rounded-lg p-2', REGIME_COLORS[regime]?.pill)}>
+                  <Icon size={18} />
                 </div>
               </div>
             </Card>
@@ -157,94 +161,57 @@ export default function Regime({ asset, loading: parentLoading }) {
         })}
       </div>
 
-      {/* Regime Timeline Chart */}
       <Card>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Regime Timeline (1 Year)</h2>
-          <p className="text-text-secondary text-sm">Anomaly score colored by market regime</p>
-        </div>
+        <h2 className="mb-1 text-lg font-semibold text-text-primary">Regime Timeline</h2>
+        <p className="mb-4 text-sm text-text-secondary">Background colors map bull, bear, and crisis state transitions.</p>
         {isLoading ? (
-          <div className="h-[300px] bg-surface rounded-lg animate-pulse" />
+          <div className="h-[320px] animate-pulse rounded-lg bg-surface" />
         ) : (
-          <ResponsiveContainer width="100%" height={300}>
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={320}>
+            <AreaChart data={timeline} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
               <defs>
-                <linearGradient id="scoreGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor="rgb(99, 102, 241)" stopOpacity={0.3} />
-                  <stop offset="95%" stopColor="rgb(99, 102, 241)" stopOpacity={0} />
+                <linearGradient id="regimeScoreGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#1D6FDC" stopOpacity={0.32} />
+                  <stop offset="100%" stopColor="#1D6FDC" stopOpacity={0.04} />
                 </linearGradient>
               </defs>
-              <XAxis
-                dataKey="date"
-                tick={{ fill: '#6b7280', fontSize: 11 }}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(d) => d?.slice(5, 10)}
-                interval="preserveStartEnd"
-              />
-              <YAxis
-                domain={[0, 100]}
-                tick={{ fill: '#6b7280', fontSize: 11 }}
-                tickLine={false}
-                axisLine={false}
-                width={40}
-              />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: '#1f2937',
-                  border: '1px solid #374151',
-                  borderRadius: 8,
-                }}
-                labelStyle={{ color: '#9ca3af' }}
-                formatter={(value, name) => [value.toFixed(1), 'Score']}
-                labelFormatter={(label) => label}
-              />
+              <CartesianGrid stroke="#DBE4EF" strokeDasharray="4 4" vertical={false} />
+              {regimePeriods.map((period) => (
+                <ReferenceArea
+                  key={`${period.regime}-${period.start}`}
+                  x1={period.start}
+                  x2={period.end}
+                  y1={yDomain[0]}
+                  y2={yDomain[1]}
+                  fill={REGIME_COLORS[period.regime]?.fill}
+                  fillOpacity={1}
+                  ifOverflow="extendDomain"
+                />
+              ))}
+              <XAxis dataKey="date" tickFormatter={(value) => formatDate(value)} tick={{ fill: '#7C8BA1', fontSize: 11 }} tickLine={false} axisLine={false} />
+              <YAxis domain={yDomain} tick={{ fill: '#7C8BA1', fontSize: 11 }} tickLine={false} axisLine={false} width={48} />
+              <Tooltip content={<RegimeTooltip />} />
               <ReferenceLine y={60} stroke="#f59e0b" strokeDasharray="3 3" />
               <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="3 3" />
-              <Area
-                type="monotone"
-                dataKey="score"
-                stroke="rgb(99, 102, 241)"
-                strokeWidth={2}
-                fill="url(#scoreGrad)"
-              />
+              <Area type="monotone" dataKey="score" stroke="#0B3A63" strokeWidth={2.3} fill="url(#regimeScoreGrad)" />
             </AreaChart>
           </ResponsiveContainer>
         )}
       </Card>
 
-      {/* Transition Matrix */}
       <Card>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Regime Transitions</h2>
-          <p className="text-text-secondary text-sm">How often the market switches between states</p>
+        <h2 className="mb-3 text-lg font-semibold text-text-primary">Regime Transition Activity</h2>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
+          {Object.entries(transitions).map(([key, count]) => {
+            const [from, to] = key.split('->')
+            return (
+              <div key={key} className="rounded-lg border border-card-border bg-surface/60 p-3">
+                <div className="text-xs uppercase tracking-[0.1em] text-text-muted">{from} to {to}</div>
+                <div className="mt-1 font-mono text-2xl font-bold text-text-primary">{count}</div>
+              </div>
+            )
+          })}
         </div>
-        {isLoading ? (
-          <div className="h-32 bg-surface rounded-lg animate-pulse" />
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-            {Object.entries(transitions).map(([key, count]) => {
-              const [from, to] = key.split('->')
-              return (
-                <div key={key} className="bg-surface-alt p-3 rounded-lg">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={clsx(
-                      'text-sm font-medium uppercase',
-                      REGIME_COLORS[from]?.text ?? 'text-text-secondary'
-                    )}>{from}</span>
-                    <span className="text-text-secondary">→</span>
-                    <span className={clsx(
-                      'text-sm font-medium uppercase',
-                      REGIME_COLORS[to]?.text ?? 'text-text-secondary'
-                    )}>{to}</span>
-                  </div>
-                  <p className="font-mono text-lg font-bold text-text-primary">{count}</p>
-                  <p className="text-text-secondary text-xs">transitions</p>
-                </div>
-              )
-            })}
-          </div>
-        )}
       </Card>
     </div>
   )

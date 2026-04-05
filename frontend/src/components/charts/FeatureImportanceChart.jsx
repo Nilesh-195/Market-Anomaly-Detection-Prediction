@@ -32,15 +32,23 @@ export default function FeatureImportanceChart({ importance, title = 'Feature Im
       <h3 className="text-lg font-semibold text-text-primary mb-4">{title}</h3>
       <ResponsiveContainer width="100%" height={300}>
         <BarChart data={data} layout="vertical">
-          <CartesianGrid strokeDasharray="3 3" stroke="#2d2d2d" />
-          <XAxis type="number" stroke="#888" />
-          <YAxis type="category" dataKey="name" width={150} stroke="#888" fontSize={11} />
+          <CartesianGrid strokeDasharray="4 4" stroke="#E2E8F0" horizontal={true} vertical={false} />
+          <XAxis type="number" stroke="#94A3B8" fontSize={11} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="name" width={100} stroke="#475569" fontSize={10} axisLine={false} tickLine={false} />
           <Tooltip
-            contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #444' }}
-            labelStyle={{ color: '#fff' }}
-            formatter={(value) => value?.toFixed(4)}
+            cursor={{ fill: '#F1F5F9' }}
+            contentStyle={{ backgroundColor: 'rgba(255, 255, 255, 0.95)', border: '1px solid #E2E8F0', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.05)', color: '#0F172A' }}
+            labelStyle={{ color: '#475569', fontSize: '12px', fontWeight: 'bold' }}
+            formatter={(value) => [`${value?.toFixed(2)}%`, 'Importance']}
+            animationDuration={300}
           />
-          <Bar dataKey="importance" fill="#3b82f6" radius={[0, 8, 8, 0]} />
+          <Bar dataKey="importance" fill="url(#blueGrad)" radius={[0, 6, 6, 0]} animationDuration={1000} />
+          <defs>
+            <linearGradient id="blueGrad" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor="#3B82F6" stopOpacity={0.8} />
+              <stop offset="100%" stopColor="#0EA5E9" stopOpacity={1} />
+            </linearGradient>
+          </defs>
         </BarChart>
       </ResponsiveContainer>
       <p className="text-text-secondary text-xs mt-4">

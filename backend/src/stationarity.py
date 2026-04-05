@@ -33,6 +33,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from statsmodels.tsa.stattools import adfuller, kpss
+from features import ASSETS
 
 warnings.filterwarnings("ignore")
 
@@ -49,9 +50,6 @@ ROOT_DIR      = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = ROOT_DIR / "backend" / "data" / "processed"
 RESULTS_DIR   = ROOT_DIR / "backend" / "results" / "stationarity"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-ASSETS = ["SP500", "VIX", "BTC", "GOLD", "NASDAQ", "TESLA"]
-
 
 # ── ADF Test ───────────────────────────────────────────────────────────────────
 def adf_test(series: pd.Series, name: str = "Series") -> dict:

@@ -42,6 +42,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from statsmodels.stats.diagnostic import acorr_ljungbox
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 from scipy import stats
+from features import ASSETS
 
 warnings.filterwarnings("ignore")
 
@@ -58,9 +59,6 @@ ROOT_DIR      = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = ROOT_DIR / "backend" / "data" / "processed"
 RESULTS_DIR   = ROOT_DIR / "backend" / "results" / "arima"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-ASSETS = ["SP500", "VIX", "BTC", "GOLD", "NASDAQ", "TESLA"]
-
 
 # ── Evaluation Metrics ─────────────────────────────────────────────────────────
 def calculate_metrics(actual: np.ndarray, predicted: np.ndarray) -> dict:

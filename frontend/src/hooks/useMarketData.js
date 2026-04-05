@@ -10,7 +10,7 @@ import {
   checkHealth,
 } from '../services/api'
 
-export function useMarketData(ticker) {
+export function useMarketData(ticker, activePage = 'dashboard') {
   const [current,       setCurrent]       = useState(null)
   const [historical,    setHistorical]    = useState(null)
   const [forecast,      setForecast]      = useState(null)
@@ -27,28 +27,60 @@ export function useMarketData(ticker) {
     if (!ticker) return
     setLoading(true)
     setError(null)
+
+    const setFromSettled = (result, setter) => {
+      if (result?.status === 'fulfilled') setter(result.value)
+    }
+
     try {
-      const online = await checkHealth()
+      // Run health check in parallel so it does not block initial UI data.
+      const healthPromise = checkHealth()
+
+      const criticalTasks = [
+        fetchCurrentAnalysis(ticker),
+        fetchSummary(),
+      ]
+
+      if (activePage === 'dashboard' || activePage === 'forecast') {
+        criticalTasks.push(fetchPriceForecast(ticker, 30, 'auto'))
+      }
+
+      if (activePage === 'historical') {
+        criticalTasks.push(fetchHistoricalAnomalies(ticker, 50))
+      }
+
+      const critical = await Promise.allSettled(criticalTasks)
+      setFromSettled(critical[0], setCurrent)
+      setFromSettled(critical[1], setSummary)
+
+      if (activePage === 'dashboard' || activePage === 'forecast') {
+        setFromSettled(critical[2], setPriceForecast)
+      }
+
+      if (activePage === 'historical') {
+        setFromSettled(critical[2], setHistorical)
+      }
+
+      // Unblock UI as soon as critical data is available.
+      setLoading(false)
+
+      // Fetch secondary dashboard data lazily.
+      if (activePage === 'dashboard') {
+        const [hist, fore, comp, evl] = await Promise.allSettled([
+          fetchHistoricalAnomalies(ticker, 50),
+          fetchAnomalyForecast(ticker, 10),
+          fetchModelComparison(ticker),
+          fetchEvaluation(),
+        ])
+        setFromSettled(hist, setHistorical)
+        setFromSettled(fore, setForecast)
+        setFromSettled(comp, setComparison)
+        setFromSettled(evl, setEvaluation)
+      }
+
+      const online = await healthPromise
       setApiOnline(online)
       if (!online) throw new Error('API offline')
-
-      const [cur, hist, fore, priceFore, comp, evl, sum] = await Promise.allSettled([
-        fetchCurrentAnalysis(ticker),
-        fetchHistoricalAnomalies(ticker, 50),
-        fetchAnomalyForecast(ticker, 10),
-        fetchPriceForecast(ticker, 30, 'auto'),
-        fetchModelComparison(ticker),
-        fetchEvaluation(),
-        fetchSummary(),
-      ])
-
-      if (cur.status       === 'fulfilled') setCurrent(cur.value)
-      if (hist.status      === 'fulfilled') setHistorical(hist.value)
-      if (fore.status      === 'fulfilled') setForecast(fore.value)
-      if (priceFore.status === 'fulfilled') setPriceForecast(priceFore.value)
-      if (comp.status      === 'fulfilled') setComparison(comp.value)
-      if (evl.status       === 'fulfilled') setEvaluation(evl.value)
-      if (sum.status       === 'fulfilled') setSummary(sum.value)
 
       setLastUpdated(new Date())
     } catch (err) {
@@ -56,7 +88,7 @@ export function useMarketData(ticker) {
     } finally {
       setLoading(false)
     }
-  }, [ticker])
+  }, [ticker, activePage])
 
   useEffect(() => { load() }, [load])
 

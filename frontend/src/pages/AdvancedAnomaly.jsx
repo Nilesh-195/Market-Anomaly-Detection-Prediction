@@ -1,315 +1,242 @@
-/**
- * AdvancedAnomaly.jsx — Phase 2 Addition
- * 7-Model Ensemble Anomaly Detection with Advanced Features
- *
- * Shows:
- * - All 7 models breakdown (4 baseline + 3 advanced)
- * - Advanced ensemble vs baseline comparison
- * - Individual model scores with confidence metrics
- * - Risk assessment
- */
-
-import { useState, useEffect } from 'react'
-import { AlertTriangle, TrendingUp, TrendingDown, Activity, BarChart3 } from 'lucide-react'
-import { Card } from '../components/ui/Card'
-import { Badge } from '../components/ui/Badge'
-import { API_BASE } from '../constants/config'
+import { useEffect, useMemo, useState } from 'react'
+import { AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
+import {
+  Line,
+  LineChart,
+  ReferenceArea,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from 'recharts'
+import { Card } from '../components/ui/Card'
+import { API_BASE } from '../constants/config'
+import { formatDate, formatPrice } from '../utils/formatters'
 
 const MODEL_CONFIG = {
   baseline: [
-    { id: 'zscore', name: 'Z-Score', desc: 'Statistical deviation detector', icon: '📊', color: 'blue' },
-    { id: 'iforest', name: 'Isolation Forest', desc: 'Unsupervised anomaly detection', icon: '🌲', color: 'green' },
-    { id: 'lstm', name: 'LSTM', desc: 'Deep learning sequence model', icon: '🔗', color: 'purple' },
-    { id: 'prophet', name: 'Prophet', desc: 'Time series decomposition', icon: '📈', color: 'orange' },
+    { id: 'zscore', name: 'Z-Score', desc: 'Statistical deviation detector' },
+    { id: 'iforest', name: 'Isolation Forest', desc: 'Unsupervised anomaly detector' },
+    { id: 'lstm', name: 'LSTM', desc: 'Deep sequence model' },
+    { id: 'prophet', name: 'Prophet', desc: 'Trend and seasonality residuals' },
   ],
   advanced: [
-    { id: 'xgb', name: 'XGBoost', desc: 'Supervised crash prediction', icon: '⚡', color: 'red' },
-    { id: 'hmm', name: 'HMM Regime', desc: 'Market state detector', icon: '🎭', color: 'indigo' },
-    { id: 'tcn', name: 'TCN', desc: 'Temporal convolutional network', icon: '🌊', color: 'cyan' },
+    { id: 'xgb', name: 'XGBoost', desc: 'Supervised crash predictor' },
+    { id: 'hmm', name: 'HMM Regime', desc: 'Market-state classifier' },
+    { id: 'tcn', name: 'TCN', desc: 'Temporal convolutional sequence model' },
   ],
 }
 
-const RISK_THRESHOLDS = {
-  LOW: { max: 40, color: 'text-green-400', bg: 'bg-green-500/20', label: 'Low Risk' },
-  MEDIUM: { max: 60, color: 'text-amber-400', bg: 'bg-amber-500/20', label: 'Medium Risk' },
-  HIGH: { max: 75, color: 'text-orange-400', bg: 'bg-orange-500/20', label: 'High Risk' },
-  CRITICAL: { max: 100, color: 'text-red-400', bg: 'bg-red-500/20', label: 'Critical' },
+function getRiskStyles(score) {
+  if (score < 40) return 'text-emerald-700 bg-emerald-50 border-emerald-200'
+  if (score < 60) return 'text-amber-700 bg-amber-50 border-amber-200'
+  if (score < 75) return 'text-orange-700 bg-orange-50 border-orange-200'
+  return 'text-red-700 bg-red-50 border-red-200'
 }
 
-function getRiskLevel(score) {
-  if (score < RISK_THRESHOLDS.LOW.max) return RISK_THRESHOLDS.LOW
-  if (score < RISK_THRESHOLDS.MEDIUM.max) return RISK_THRESHOLDS.MEDIUM
-  if (score < RISK_THRESHOLDS.HIGH.max) return RISK_THRESHOLDS.HIGH
-  return RISK_THRESHOLDS.CRITICAL
-}
-
-function ModelCard({ model, score }) {
+function OverlayTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null
+  const row = payload[0]?.payload
   return (
-    <Card>
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <div className="text-2xl mb-1">{model.icon}</div>
-          <h3 className="font-semibold text-text-primary">{model.name}</h3>
-          <p className="text-xs text-text-secondary mt-1">{model.desc}</p>
-        </div>
-        <div className={clsx(
-          'text-right p-2 rounded-lg',
-          getRiskLevel(score).bg
-        )}>
-          <div className={clsx('font-mono font-bold text-lg', getRiskLevel(score).color)}>
-            {score.toFixed(1)}
-          </div>
-        </div>
+    <div className="min-w-[190px] rounded-xl border border-card-border bg-white p-3 shadow-float">
+      <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-text-muted">
+        {formatDate(label, 'MMM dd, yyyy')}
       </div>
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-text-secondary">Price</span>
+        <span className="font-mono font-semibold text-brand-blue">{formatPrice(row?.close)}</span>
+      </div>
+      {row?.isAnomaly && (
+        <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] text-red-700">
+          Anomaly Zone
+        </div>
+      )}
+    </div>
+  )
+}
 
-      {/* Score bar */}
-      <div className="w-full h-2 bg-surface rounded-full overflow-hidden">
-        <div
-          style={{ width: `${Math.min(score, 100)}%` }}
-          className={clsx(
-            'h-full transition-all',
-            score < 40 && 'bg-green-500',
-            score >= 40 && score < 60 && 'bg-amber-500',
-            score >= 60 && score < 75 && 'bg-orange-500',
-            score >= 75 && 'bg-red-500'
-          )}
+function AgreementGauge({ agreement, total }) {
+  const progress = total > 0 ? agreement / total : 0
+  const radius = 45
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference * (1 - progress)
+
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <svg width="120" height="120" viewBox="0 0 120 120">
+        <circle cx="60" cy="60" r={radius} stroke="#DBE4EF" strokeWidth="10" fill="none" />
+        <circle
+          cx="60"
+          cy="60"
+          r={radius}
+          stroke="#1D6FDC"
+          strokeWidth="10"
+          fill="none"
+          strokeLinecap="round"
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          transform="rotate(-90 60 60)"
         />
-      </div>
-    </Card>
+        <text x="60" y="56" textAnchor="middle" className="fill-text-primary font-mono text-lg font-bold">
+          {agreement}/{total}
+        </text>
+        <text x="60" y="72" textAnchor="middle" className="fill-text-muted text-[10px] uppercase tracking-[0.1em]">
+          Models
+        </text>
+      </svg>
+      <p className="text-center text-xs text-text-secondary">Models currently signaling elevated anomaly risk.</p>
+    </div>
   )
 }
 
 export default function AdvancedAnomaly({ selectedAsset, loading: parentLoading }) {
   const [advancedData, setAdvancedData] = useState(null)
   const [baselineData, setBaselineData] = useState(null)
-  const [tierComparison, setTierComparison] = useState(null)
-  const [loading, setLoading] = useState(true)
+  const [historyData, setHistoryData] = useState(null)
   const [error, setError] = useState(null)
 
   useEffect(() => {
     if (!selectedAsset) return
 
-    setLoading(true)
-    setError(null)
-
     Promise.all([
-      fetch(`${API_BASE}/anomaly/advanced/${selectedAsset}`).then(r => r.json()),
-      fetch(`${API_BASE}/anomaly/current/${selectedAsset}`).then(r => r.json()),
-      fetch(`${API_BASE}/anomaly/compare-tiers/${selectedAsset}`).then(r => r.json()),
+      fetch(`${API_BASE}/anomaly/advanced/${selectedAsset}`).then((r) => r.json()),
+      fetch(`${API_BASE}/anomaly/current/${selectedAsset}`).then((r) => r.json()),
+      fetch(`${API_BASE}/anomaly/historical/${selectedAsset}?top_n=180`).then((r) => r.json()),
     ])
-      .then(([adv, base, comp]) => {
-        setAdvancedData(adv)
-        setBaselineData(base)
-        setTierComparison(comp)
+      .then(([advanced, baseline, history]) => {
+        setAdvancedData(advanced)
+        setBaselineData(baseline)
+        setHistoryData(history)
         setError(null)
       })
-      .catch(err => setError(err?.message || 'Failed to load data'))
-      .finally(() => setLoading(false))
+      .catch((err) => setError(err?.message || 'Failed to load data'))
   }, [selectedAsset])
+
+  const isLoading = (!advancedData && !baselineData && !historyData) || parentLoading
+  const advScore = advancedData?.advanced_ensemble ?? 0
+  const baseScore = baselineData?.ensemble_score ?? 0
+  const regimeText = advancedData?.current_regime ?? 'unknown'
+
+  const modelScores = advancedData?.model_scores ?? {}
+  const scoreValues = Object.values(modelScores).filter((v) => Number.isFinite(v))
+  const agreementCount = scoreValues.filter((value) => value >= 60).length
+
+  const chartData = useMemo(() => {
+    const anomalyDates = new Set((historyData?.events ?? []).map((event) => event.date))
+    return (historyData?.chart_data ?? []).slice(-160).map((row) => ({
+      ...row,
+      isAnomaly: anomalyDates.has(row.date),
+    }))
+  }, [historyData])
+
+  const priceValues = chartData.map((row) => row.close).filter(Number.isFinite)
+  const yDomain = priceValues.length
+    ? [Math.min(...priceValues) * 0.985, Math.max(...priceValues) * 1.015]
+    : ['auto', 'auto']
 
   if (error) {
     return (
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Advanced Anomaly Detection</h1>
-          <p className="text-text-secondary text-sm">7-model ensemble with regime detection</p>
+          <h1 className="text-2xl font-bold text-text-primary">Advanced Anomaly Detection</h1>
+          <p className="text-sm text-text-secondary">7-model ensemble with structural break monitoring.</p>
         </div>
         <Card>
-          <div className="text-center py-8 text-text-secondary">
-            <AlertTriangle className="w-12 h-12 mx-auto mb-4 text-amber-500" />
+          <div className="py-8 text-center text-text-secondary">
+            <AlertTriangle className="mx-auto mb-3 h-12 w-12 text-amber-500" />
             <p>{error}</p>
-            <p className="text-sm mt-2">Run Phase 2 training to enable advanced anomaly detection.</p>
           </div>
         </Card>
       </div>
     )
   }
 
-  const advScore = advancedData?.advanced_ensemble ?? 0
-  const baseScore = baselineData?.ensemble_score ?? 0
-  const improvement = advScore - baseScore
-  const regimeText = advancedData?.current_regime ?? 'Unknown'
-  const riskLevel = getRiskLevel(advScore)
-
-  const isLoading = loading || parentLoading
-
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary mb-1">Advanced Anomaly Detection</h1>
-          <p className="text-text-secondary text-sm">7-model ensemble with regime detection for {selectedAsset}</p>
+          <h1 className="text-2xl font-bold text-text-primary">Advanced Anomaly Detection</h1>
+          <p className="text-sm text-text-secondary">Ensemble structural stress detection for {selectedAsset}.</p>
         </div>
-        <div className={clsx(
-          'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium',
-          riskLevel.bg + ' ' + riskLevel.color
-        )}>
-          <AlertTriangle size={16} />
-          <span>{riskLevel.label}</span>
+        <div className={clsx('rounded-lg border px-4 py-2 text-sm font-semibold uppercase', getRiskStyles(advScore))}>
+          {regimeText} regime
         </div>
       </div>
 
-      {/* Top-level Ensemble Scores */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         <Card>
-          <p className="text-text-secondary text-sm uppercase tracking-wide mb-2">Baseline Ensemble</p>
-          <div className={clsx(
-            'font-mono font-bold text-3xl',
-            getRiskLevel(baseScore).color
-          )}>
-            {baseScore.toFixed(1)}
-          </div>
-          <p className="text-text-secondary text-xs mt-2">4 models (Z-Score, IForest, LSTM, Prophet)</p>
+          <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Baseline Ensemble</p>
+          <p className="font-mono text-3xl font-bold text-text-primary">{baseScore.toFixed(1)}</p>
+          <p className="mt-2 text-xs text-text-secondary">4-model signal</p>
         </Card>
+        <Card className="border-brand-blue/20 bg-gradient-to-br from-white to-sky-50">
+          <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Advanced Ensemble</p>
+          <p className="font-mono text-3xl font-bold text-brand-blue">{advScore.toFixed(1)}</p>
+          <p className="mt-2 text-xs text-text-secondary">7-model signal</p>
+        </Card>
+        <Card>
+          <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Delta</p>
+          <p className={clsx('font-mono text-3xl font-bold', advScore - baseScore >= 0 ? 'text-red-600' : 'text-emerald-600')}>
+            {advScore - baseScore >= 0 ? '+' : ''}{(advScore - baseScore).toFixed(1)}
+          </p>
+          <p className="mt-2 text-xs text-text-secondary">advanced minus baseline</p>
+        </Card>
+      </div>
 
-        <Card className="bg-blue-500/10 border-blue-600">
-          <p className="text-text-secondary text-sm uppercase tracking-wide mb-2">Advanced Ensemble</p>
-          <div className={clsx(
-            'font-mono font-bold text-3xl',
-            getRiskLevel(advScore).color
-          )}>
-            {advScore.toFixed(1)}
-          </div>
-          <p className="text-text-secondary text-xs mt-2">7 models (baseline + XGB, HMM, TCN)</p>
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.3fr_0.7fr]">
+        <Card>
+          <h2 className="mb-1 text-lg font-semibold text-text-primary">Anomaly Overlay Chart</h2>
+          <p className="mb-4 text-sm text-text-secondary">Danger blocks mark days tagged by the ensemble as anomalous.</p>
+          {isLoading ? (
+            <div className="h-[320px] animate-pulse rounded-lg bg-surface" />
+          ) : (
+            <ResponsiveContainer width="100%" height={320}>
+              <LineChart data={chartData} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+                <CartesianGrid stroke="#DBE4EF" strokeDasharray="4 4" vertical={false} />
+                <XAxis dataKey="date" tickFormatter={(value) => formatDate(value)} tick={{ fill: '#7C8BA1', fontSize: 11 }} tickLine={false} axisLine={false} />
+                <YAxis domain={yDomain} tick={{ fill: '#7C8BA1', fontSize: 11 }} tickLine={false} axisLine={false} tickFormatter={(v) => formatPrice(v)} width={75} />
+                <Tooltip content={<OverlayTooltip />} />
+                {chartData.filter((row) => row.isAnomaly).map((row) => (
+                  <ReferenceArea key={`anom-${row.date}`} x1={row.date} x2={row.date} fill="#ef4444" fillOpacity={0.14} />
+                ))}
+                <Line type="monotone" dataKey="close" stroke="#0B3A63" strokeWidth={2.4} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </Card>
 
         <Card>
-          <p className="text-text-secondary text-sm uppercase tracking-wide mb-2">Improvement</p>
-          <div className={clsx(
-            'font-mono font-bold text-3xl',
-            improvement > 0 ? 'text-orange-400' : improvement < 0 ? 'text-green-400' : 'text-text-secondary'
-          )}>
-            {improvement > 0 ? '+' : ''}{improvement.toFixed(1)}
-          </div>
-          <p className="text-text-secondary text-xs mt-2">Advanced vs Baseline delta</p>
+          <h2 className="mb-2 text-lg font-semibold text-text-primary">Model Agreement Gauge</h2>
+          <p className="mb-3 text-sm text-text-secondary">Consensus strength across all 7 models.</p>
+          <AgreementGauge agreement={agreementCount} total={7} />
         </Card>
       </div>
 
-      {/* Market Regime */}
-      <Card>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <h3 className="text-lg font-semibold text-text-primary mb-4">Current Market Regime</h3>
-            <div className={clsx(
-              'inline-flex items-center gap-2 px-4 py-3 rounded-lg text-base font-medium',
-              regimeText === 'bull' && 'bg-green-500/20 text-green-400',
-              regimeText === 'bear' && 'bg-amber-500/20 text-amber-400',
-              regimeText === 'crisis' && 'bg-red-500/20 text-red-400'
-            )}>
-              {regimeText === 'bull' && <TrendingUp size={20} />}
-              {regimeText === 'bear' && <TrendingDown size={20} />}
-              {regimeText === 'crisis' && <AlertTriangle size={20} />}
-              <span className="uppercase">{regimeText} REGIME</span>
-            </div>
-            <p className="text-text-secondary text-sm mt-4">
-              The market is currently in a <strong>{regimeText}</strong> regime based on HMM analysis.
-              This regime detection helps contextualize anomaly scores.
-            </p>
-          </div>
-          <div>
-            <h3 className="text-lg font-semibold text-text-primary mb-4">What This Means</h3>
-            <div className="space-y-2 text-sm text-text-secondary">
-              {regimeText === 'bull' && (
-                <>
-                  <p>✓ Low volatility environment</p>
-                  <p>✓ Returns typically positive</p>
-                  <p>⚠ Anomalies may indicate reversals</p>
-                </>
-              )}
-              {regimeText === 'bear' && (
-                <>
-                  <p>⚠ Moderate volatility</p>
-                  <p>⚠ Risk of further downside</p>
-                  <p>✓ Caution warranted</p>
-                </>
-              )}
-              {regimeText === 'crisis' && (
-                <>
-                  <p className="text-red-400">⚠ High volatility environment</p>
-                  <p className="text-red-400">⚠ Significant risk present</p>
-                  <p className="text-red-400">⚠ Immediate attention required</p>
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      </Card>
-
-      {/* Baseline Models (4) */}
-      <div>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Baseline Models (4)</h2>
-          <p className="text-text-secondary text-sm">Classical and LSTM approaches</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {MODEL_CONFIG.baseline.map(model => {
-            const score = advancedData?.model_scores?.[model.id] ?? 0
-            return <ModelCard key={model.id} model={model} score={score} />
-          })}
-        </div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[...MODEL_CONFIG.baseline, ...MODEL_CONFIG.advanced].map((model) => {
+          const value = modelScores?.[model.id] ?? 0
+          return (
+            <Card key={model.id} className="border-card-border/90">
+              <p className="text-sm font-semibold text-text-primary">{model.name}</p>
+              <p className="mt-1 text-xs text-text-secondary">{model.desc}</p>
+              <p className="mt-3 font-mono text-2xl font-bold text-brand-blue">{value.toFixed(1)}</p>
+            </Card>
+          )
+        })}
       </div>
 
-      {/* Advanced Models (3) */}
-      <div>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Advanced Models (3) — Phase 2</h2>
-          <p className="text-text-secondary text-sm">Supervised, regime-aware, and deep temporal approaches</p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {MODEL_CONFIG.advanced.map(model => {
-            const score = advancedData?.model_scores?.[model.id] ?? 0
-            return <ModelCard key={model.id} model={model} score={score} />
-          })}
-        </div>
-      </div>
-
-      {/* Model Descriptions */}
       <Card>
-        <h3 className="text-lg font-semibold text-text-primary mb-4">Model Details</h3>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <h3 className="mb-3 text-lg font-semibold text-text-primary">Interpretation</h3>
+        <div className="grid grid-cols-1 gap-4 text-sm text-text-secondary md:grid-cols-2">
           <div>
-            <h4 className="font-medium text-text-primary mb-3">Baseline Tier</h4>
-            <ul className="space-y-2 text-sm text-text-secondary">
-              <li><strong>Z-Score:</strong> Detects price deviation from moving average</li>
-              <li><strong>Isolation Forest:</strong> Unsupervised anomaly in high-dimensional feature space</li>
-              <li><strong>LSTM:</strong> Learns temporal patterns and identifies breaks</li>
-              <li><strong>Prophet:</strong> Decomposes trend/seasonality and finds residual anomalies</li>
-            </ul>
+            <p className="font-semibold text-text-primary">Signal Bias</p>
+            <p className="mt-1">High agreement and positive ensemble deltas suggest broad multi-model stress confirmation.</p>
           </div>
           <div>
-            <h4 className="font-medium text-text-primary mb-3">Advanced Tier (Phase 2)</h4>
-            <ul className="space-y-2 text-sm text-text-secondary">
-              <li><strong>XGBoost:</strong> Supervised classifier trained on historical crash labels</li>
-              <li><strong>HMM Regime:</strong> Detects bull/bear/crisis market states</li>
-              <li><strong>TCN:</strong> Temporal Convolutional Network for deep sequence modeling</li>
-            </ul>
-          </div>
-        </div>
-      </Card>
-
-      {/* Ensemble Strategy */}
-      <Card>
-        <h3 className="text-lg font-semibold text-text-primary mb-4">Ensemble Strategy</h3>
-        <div className="space-y-4 text-sm text-text-secondary">
-          <div>
-            <p className="font-medium text-text-primary mb-1">Dynamic Weighting</p>
-            <p>Each model contributes to the final score with learned weights optimized for crash detection:</p>
-            <ul className="list-disc list-inside mt-2 space-y-1 text-xs">
-              <li>Z-Score: 5% (baseline statistical)</li>
-              <li>Isolation Forest: 10% (unsupervised ML)</li>
-              <li>LSTM: 20% (deep sequence learning)</li>
-              <li>Prophet: 10% (trend deviation)</li>
-              <li>XGBoost: 30% (supervised — highest weight)</li>
-              <li>HMM: 10% (market regime context)</li>
-              <li>TCN: 15% (temporal conv network)</li>
-            </ul>
-          </div>
-          <div className="p-3 bg-surface rounded-lg">
-            <p>The advanced ensemble prioritizes <strong>supervised signals (XGBoost)</strong> which has seen historical crash events,
-            combined with <strong>temporal deep learning (LSTM, TCN)</strong> for pattern detection and
-            <strong>regime awareness (HMM)</strong> for context.</p>
+            <p className="font-semibold text-text-primary">Regime Context</p>
+            <p className="mt-1">Regime state calibrates severity. Crisis regime plus high agreement requires immediate risk review.</p>
           </div>
         </div>
       </Card>

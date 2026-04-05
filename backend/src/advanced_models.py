@@ -302,34 +302,51 @@ def tcn_anomaly_score(df, model, scaler, feature_cols, window=30):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def dynamic_ensemble_score(
-    z_score, iforest, lstm, prophet, xgb, hmm, tcn,
+    z_score, iforest, lstm, prophet, xgb, hmm, tcn, vae=None, at=None,
     weights=None
 ) -> pd.Series:
     """
-    Combine all 7 model scores with weights.
-    Default weights give more power to supervised (XGBoost) and deep (LSTM/TCN).
-    Weights are tunable after Phase 2 evaluation.
+    Combine all 9 model scores with weights.
+    Default weights give more power to supervised (XGBoost), deep (LSTM/TCN/VAE),
+    and the Anomaly Transformer (association discrepancy signal).
+    Weights are tunable after evaluation.
     """
     if weights is None:
         weights = {
-            'zscore':  0.05,   # baseline statistical
-            'iforest': 0.10,   # unsupervised ML
-            'lstm':    0.20,   # deep sequence
-            'prophet': 0.10,   # trend deviation
-            'xgb':     0.30,   # supervised — highest weight (uses crash labels)
-            'hmm':     0.10,   # regime state
-            'tcn':     0.15,   # temporal conv network
+            'zscore':  0.02,   # baseline statistical
+            'iforest': 0.05,   # unsupervised ML
+            'lstm':    0.10,   # deep sequence
+            'prophet': 0.03,   # trend deviation
+            'xgb':     0.35,   # supervised — highest weight (uses crash labels)
+            'hmm':     0.08,   # regime state
+            'tcn':     0.07,   # temporal conv network
+            'vae':     0.12,   # variational autoencoder (dual signal)
+            'at':      0.18,   # anomaly transformer (association discrepancy)
         }
 
     scores = {
         'zscore': z_score, 'iforest': iforest, 'lstm': lstm,
-        'prophet': prophet, 'xgb': xgb, 'hmm': hmm, 'tcn': tcn
+        'prophet': prophet, 'xgb': xgb, 'hmm': hmm, 'tcn': tcn,
     }
+
+    # Add VAE if provided (backward compatible)
+    if vae is not None:
+        scores['vae'] = vae
+    else:
+        weights = dict(weights)
+        weights['xgb'] += weights.pop('vae', 0)
+
+    # Add Anomaly Transformer if provided (backward compatible)
+    if at is not None:
+        scores['at'] = at
+    else:
+        weights = dict(weights)
+        weights['xgb'] += weights.pop('at', 0)
 
     # Align all series to same index, fill missing with mean
     idx = z_score.index
     combined = sum(
         weights[k] * scores[k].reindex(idx).fillna(0.5)
-        for k in weights
+        for k in weights if k in scores
     )
     return (combined * 100).clip(0, 100)

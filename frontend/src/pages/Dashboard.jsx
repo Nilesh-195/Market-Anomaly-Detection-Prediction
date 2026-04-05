@@ -1,217 +1,291 @@
-import { useState, useEffect } from 'react'
-import {
-  DollarSign, Activity, Waves, AlertCircle, TrendingUp, TrendingDown, Layers, Zap,
-} from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Activity, Layers, Sparkles, Zap } from 'lucide-react'
+import clsx from 'clsx'
 import { Card } from '../components/ui/Card'
-import KPICard from '../components/cards/KPICard'
 import ModelConsensus from '../components/widgets/ModelConsensus'
 import AnomalyTable from '../components/widgets/AnomalyTable'
 import PriceAreaChart from '../components/charts/PriceAreaChart'
 import RiskScoreChart from '../components/charts/RiskScoreChart'
-import {
-  formatPrice, formatScore, formatZScore, formatVolatility, formatPct,
-} from '../utils/formatters'
-import { getRiskColor, getZScoreColor, getVolatilityColor } from '../utils/riskHelpers'
-import { useLiveScores } from '../hooks/useWebSocket'
-import { API_BASE } from '../constants/config'
-import clsx from 'clsx'
+import { formatPct, formatPrice, formatScore } from '../utils/formatters'
+import { getRiskColor } from '../utils/riskHelpers'
+import { API_BASE, ASSETS } from '../constants/config'
 
-const REGIME_COLORS = {
-  bull: 'bg-green-500/20 text-green-400',
-  bear: 'bg-amber-500/20 text-amber-400',
-  crisis: 'bg-red-500/20 text-red-400',
+const ASSET_NAMES = {
+  SP500: 'S&P 500',
+  VIX: 'Volatility Index',
+  BTC: 'Bitcoin',
+  GOLD: 'Gold',
+  NASDAQ: 'Nasdaq 100',
+  TESLA: 'Tesla',
+}
+
+function riskBadgeClasses(score) {
+  if (score >= 75) return 'bg-red-50 text-red-700 border-red-200'
+  if (score >= 60) return 'bg-orange-50 text-orange-700 border-orange-200'
+  if (score >= 40) return 'bg-amber-50 text-amber-700 border-amber-200'
+  return 'bg-emerald-50 text-emerald-700 border-emerald-200'
+}
+
+function Sparkline({ values = [] }) {
+  if (!values.length) {
+    return <div className="h-12 rounded-lg bg-surface" />
+  }
+
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min || 1
+  const points = values
+    .map((value, index) => {
+      const x = (index / Math.max(values.length - 1, 1)) * 100
+      const y = 100 - (((value - min) / range) * 76 + 12)
+      return `${x},${y}`
+    })
+    .join(' ')
+
+  return (
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="h-12 w-full overflow-visible">
+      <defs>
+        <linearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#1D6FDC" stopOpacity="0.36" />
+          <stop offset="100%" stopColor="#1D6FDC" stopOpacity="0.02" />
+        </linearGradient>
+      </defs>
+      <polyline
+        points={points}
+        fill="none"
+        stroke="#1D6FDC"
+        strokeWidth="3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <polygon points={`0,100 ${points} 100,100`} fill="url(#sparkFill)" />
+    </svg>
+  )
 }
 
 export default function Dashboard({ current, historical, priceForecast, loading, selectedAsset }) {
   const [advancedData, setAdvancedData] = useState(null)
-  const { data: liveData, connected } = useLiveScores(selectedAsset ?? 'SP500')
+  const [overviewCards, setOverviewCards] = useState([])
+  const [overviewLoading, setOverviewLoading] = useState(true)
 
-  // Fetch advanced analysis for regime and model tiers
   useEffect(() => {
     if (!selectedAsset) return
     fetch(`${API_BASE}/anomaly/advanced/${selectedAsset}`)
-      .then(res => res.json())
+      .then((res) => res.json())
       .then(setAdvancedData)
-      .catch(console.error)
+      .catch(() => setAdvancedData(null))
   }, [selectedAsset])
 
-  const score     = current?.ensemble_score ?? 0
-  const advScore  = advancedData?.advanced_ensemble ?? score
-  const regime    = advancedData?.current_regime ?? liveData?.regime ?? 'unknown'
-  const price     = current?.price
-  const zscore    = current?.zscore
-  const vol       = current?.volatility
-  const anomCount = historical?.total_anomaly_days ?? 0
+  useEffect(() => {
+    let active = true
 
-  // Price forecast data
-  const currentPrice    = priceForecast?.current_price ?? price ?? 0
-  const forecastValues  = priceForecast?.forecast?.values ?? []
-  const tomorrowPrice   = forecastValues[0] ?? currentPrice
-  const tomorrowChange  = currentPrice ? ((tomorrowPrice / currentPrice) - 1) * 100 : 0
+    const loadOverview = async () => {
+      setOverviewLoading(true)
+      try {
+        const summaryRes = await fetch(`${API_BASE}/summary`)
+        const summaryJson = await summaryRes.json()
+        const summaryAssets = Array.isArray(summaryJson?.assets) ? summaryJson.assets : []
 
-  // chart_data comes from historical_anomalies endpoint
-  const chartData  = historical?.chart_data ?? []
-  const anomalyPts = (historical?.events ?? []).slice(0, 30).map(a => ({
-    date:  a.date,
-    close: null,
-  }))
+        const cards = await Promise.all(summaryAssets.map(async (item) => {
+          if (item?.error) {
+            return {
+              asset: item.asset,
+              name: ASSET_NAMES[item.asset] ?? item.asset,
+              currentPrice: null,
+              score: 0,
+              riskLabel: 'Unavailable',
+              delta30dPct: 0,
+              sparkline: [],
+            }
+          }
+
+          const [forecastRes, historyRes] = await Promise.allSettled([
+            fetch(`${API_BASE}/forecast/price/${item.asset}?horizon=30&method=auto`).then((r) => r.json()),
+            fetch(`${API_BASE}/anomaly/historical/${item.asset}?top_n=30`).then((r) => r.json()),
+          ])
+
+          const forecastJson = forecastRes.status === 'fulfilled' ? forecastRes.value : null
+          const historyJson = historyRes.status === 'fulfilled' ? historyRes.value : null
+
+          const forecast30d =
+            forecastJson?.summary?.forecast_30d ??
+            forecastJson?.forecast?.values?.[forecastJson?.forecast?.values?.length - 1] ??
+            item?.forecast_1d ??
+            item?.current_price ??
+            0
+
+          const currentPrice = item?.current_price ?? 0
+          const delta30dPct = currentPrice > 0
+            ? ((forecast30d / currentPrice) - 1) * 100
+            : 0
+
+          return {
+            asset: item.asset,
+            name: ASSET_NAMES[item.asset] ?? item.asset,
+            currentPrice,
+            score: item?.anomaly_score ?? 0,
+            riskLabel: item?.risk_label ?? 'Unknown',
+            delta30dPct,
+            sparkline: (historyJson?.chart_data ?? [])
+              .slice(-30)
+              .map((row) => row?.close)
+              .filter((value) => Number.isFinite(value)),
+          }
+        }))
+
+        const ordered = ASSETS.map((asset) => cards.find((card) => card.asset === asset.ticker)).filter(Boolean)
+        if (active) setOverviewCards(ordered)
+      } catch {
+        if (active) setOverviewCards([])
+      } finally {
+        if (active) setOverviewLoading(false)
+      }
+    }
+
+    loadOverview()
+    return () => {
+      active = false
+    }
+  }, [selectedAsset])
+
+  const score = current?.ensemble_score ?? 0
+  const advScore = advancedData?.advanced_ensemble ?? score
+  const regime = advancedData?.current_regime ?? 'unknown'
+
+  const currentPrice = priceForecast?.current_price ?? current?.price ?? 0
+  const tomorrowPrice = priceForecast?.forecast?.values?.[0] ?? currentPrice
+  const tomorrowChange = currentPrice > 0 ? ((tomorrowPrice / currentPrice) - 1) * 100 : 0
+
+  const chartData = historical?.chart_data ?? []
+  const anomalyPts = useMemo(
+    () => (historical?.events ?? []).slice(0, 40).map((event) => ({ date: event.date, close: null })),
+    [historical]
+  )
 
   return (
     <div className="space-y-6">
-      {/* Header with Live Badge and Regime Pill */}
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-text-primary">Market Dashboard</h1>
-            {connected && (
-              <span className="flex items-center gap-1.5 px-2 py-0.5 bg-green-500/20 text-green-400 text-xs font-medium rounded-full">
-                <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
-                LIVE
-              </span>
-            )}
+      <Card className="relative overflow-hidden border-brand-blue/15 bg-gradient-to-br from-white via-white to-sky-50/55">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_88%_12%,rgba(21,158,192,0.15),transparent_35%)]" />
+        <div className="relative flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-extrabold tracking-tight text-text-primary">Global Overview Dashboard</h1>
+            <p className="mt-2 text-sm text-text-secondary">
+              Cross-asset command center with live pricing, forecast deltas, and anomaly risk signals.
+            </p>
           </div>
-          <p className="text-text-secondary text-sm">Real-time market anomaly detection and analysis</p>
+          <div className="inline-flex items-center gap-2 rounded-xl border border-card-border bg-white/80 px-3 py-2 text-xs font-mono text-text-secondary">
+            <Sparkles size={14} className="text-brand-blue-dim" />
+            {selectedAsset} focus
+          </div>
         </div>
-        {regime !== 'unknown' && (
-          <div className={clsx(
-            'flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium',
-            REGIME_COLORS[regime] ?? 'bg-gray-500/20 text-gray-400'
-          )}>
-            <Layers size={16} />
-            <span className="uppercase">{regime} Regime</span>
-          </div>
-        )}
+      </Card>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {(overviewLoading ? Array.from({ length: 6 }) : overviewCards).map((card, index) => (
+          <Card
+            key={card?.asset ?? `skeleton-${index}`}
+            hover
+            className="overflow-hidden border-card-border/90 bg-gradient-to-br from-white to-surface/70"
+          >
+            {overviewLoading || !card ? (
+              <div className="animate-pulse space-y-3">
+                <div className="h-4 w-24 rounded bg-surface" />
+                <div className="h-8 w-32 rounded bg-surface" />
+                <div className="h-12 rounded bg-surface" />
+              </div>
+            ) : (
+              <>
+                <div className="mb-3 flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold uppercase tracking-[0.2em] text-text-muted">{card.asset}</div>
+                    <div className="mt-1 text-sm font-semibold text-text-primary">{card.name}</div>
+                  </div>
+                  <span className={clsx('rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase', riskBadgeClasses(card.score))}>
+                    {card.riskLabel}
+                  </span>
+                </div>
+
+                <div className="mb-2 flex items-end justify-between gap-3">
+                  <div className="font-mono text-2xl font-bold text-text-primary">{formatPrice(card.currentPrice)}</div>
+                  <div className={clsx(
+                    'text-xs font-mono font-semibold',
+                    card.delta30dPct >= 0 ? 'text-emerald-600' : 'text-red-600'
+                  )}>
+                    30D {card.delta30dPct >= 0 ? '+' : ''}{formatPct(card.delta30dPct)}
+                  </div>
+                </div>
+
+                <Sparkline values={card.sparkline} />
+              </>
+            )}
+          </Card>
+        ))}
       </div>
 
-      {/* KPI Cards - Essential Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
-        <KPICard
-          label="Current Price" index={0} loading={loading}
-          value={price ? formatPrice(price) : '—'}
-          icon={DollarSign}
-          delta={current?.price_change_pct ? `${current.price_change_pct > 0 ? '+' : ''}${current.price_change_pct?.toFixed(2)}%` : null}
-        />
-        <KPICard
-          label="Risk Score" index={1} loading={loading}
-          value={formatScore(score)}
-          valueColor={getRiskColor(score)}
-          icon={Activity}
-          delta={current?.score_delta != null ? `${current.score_delta > 0 ? '+' : ''}${formatScore(current.score_delta)}` : null}
-        />
-        <KPICard
-          label="Z-Score" index={2} loading={loading}
-          value={zscore != null ? formatZScore(zscore) : '—'}
-          valueColor={zscore != null ? getZScoreColor(zscore) : undefined}
-          icon={() => <span className="text-text-primary text-sm">σ</span>}
-        />
-        <KPICard
-          label="Volatility (30d)" index={3} loading={loading}
-          value={vol != null ? formatVolatility(vol) : '—'}
-          valueColor={vol != null ? getVolatilityColor(vol) : undefined}
-          icon={Waves}
-        />
-        <KPICard
-          label="Anomalies" index={4} loading={loading}
-          value={String(anomCount)}
-          icon={AlertCircle}
-          delta={null}
-          deltaLabel="detected"
-        />
-      </div>
-
-      {/* Model Tier Comparison Card */}
-      {advancedData && (
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <Card>
-          <div className="flex items-center gap-2 mb-4">
-            <Zap className="w-5 h-5 text-amber-400" />
-            <h2 className="text-lg font-semibold text-text-primary">Model Tier Comparison</h2>
+          <div className="mb-4 flex items-center gap-2">
+            <Layers className="h-5 w-5 text-brand-blue-dim" />
+            <h2 className="text-lg font-semibold text-text-primary">Selected Asset Context</h2>
           </div>
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-2 gap-4">
             <div>
-              <p className="text-text-secondary text-sm mb-1">Baseline (4 models)</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Baseline Score</p>
               <p className="font-mono text-3xl font-bold" style={{ color: getRiskColor(score) }}>
                 {formatScore(score)}
               </p>
-              <p className="text-text-secondary text-xs mt-1">Z-Score, IForest, LSTM, Prophet</p>
             </div>
             <div>
-              <p className="text-text-secondary text-sm mb-1">Advanced (7 models)</p>
+              <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Advanced Score</p>
               <p className="font-mono text-3xl font-bold" style={{ color: getRiskColor(advScore) }}>
                 {formatScore(advScore)}
               </p>
-              <p className="text-text-secondary text-xs mt-1">+ XGBoost, HMM, TCN</p>
             </div>
           </div>
+          <p className="mt-4 text-sm text-text-secondary">
+            Current regime: <span className="font-semibold uppercase text-text-primary">{regime}</span>
+          </p>
         </Card>
-      )}
 
-      {/* Price Chart Section */}
-      <Card>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Price History</h2>
-          <p className="text-text-secondary text-sm">Historical price with anomaly markers</p>
-        </div>
-        {loading
-          ? <div className="h-[300px] bg-surface rounded-lg animate-pulse" />
-          : <PriceAreaChart data={chartData} anomalyPoints={anomalyPts} />
-        }
-      </Card>
-
-      {/* Risk Score Timeline */}
-      <Card>
-        <div className="mb-4">
-          <h2 className="text-lg font-semibold text-text-primary">Risk Timeline</h2>
-          <p className="text-text-secondary text-sm">Ensemble anomaly score over time</p>
-        </div>
-        {loading
-          ? <div className="h-[200px] bg-surface rounded-lg animate-pulse" />
-          : <RiskScoreChart data={chartData} />
-        }
-      </Card>
-
-      {/* Anomaly Events + Model Consensus */}
-      <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-6">
         <Card>
-          <div className="mb-4">
-            <h2 className="text-lg font-semibold text-text-primary">Anomaly Events</h2>
-            <p className="text-text-secondary text-sm">{anomCount} anomalies detected in history</p>
+          <div className="mb-2 flex items-center gap-2">
+            <Zap className="h-4 w-4 text-amber-500" />
+            <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-text-primary">Near-term forecast</h3>
           </div>
-          <AnomalyTable
-            events={historical?.events ?? []}
-            loading={loading}
-            maxRows={8}
-          />
-        </Card>
-
-        {/* Forecast + Model Consensus */}
-        <div className="space-y-6">
-          {/* Tomorrow's Price */}
-          <Card>
-            <div className="mb-4">
-              <h3 className="text-sm font-semibold text-text-primary uppercase tracking-wide">Tomorrow Prediction</h3>
+          <div className="mt-3 flex items-end justify-between">
+            <div>
+              <p className="text-xs text-text-muted">Tomorrow target</p>
+              <p className="font-mono text-3xl font-bold text-text-primary">{formatPrice(tomorrowPrice)}</p>
             </div>
-            {loading ? (
-              <div className="h-16 bg-surface rounded animate-pulse" />
-            ) : (
-              <div className="flex items-baseline gap-3">
-                <span className="font-mono font-bold text-3xl text-text-primary">
-                  {formatPrice(tomorrowPrice)}
-                </span>
-                <span className={clsx(
-                  'flex items-center gap-1 text-sm font-mono font-medium',
-                  tomorrowChange >= 0 ? 'text-risk-normal' : 'text-risk-extreme'
-                )}>
-                  {tomorrowChange >= 0 ? <TrendingUp size={14} /> : <TrendingDown size={14} />}
-                  {formatPct(tomorrowChange)}
-                </span>
-              </div>
-            )}
-          </Card>
-
-          {/* Model Consensus */}
-          <ModelConsensus current={current} />
-        </div>
+            <p className={clsx('font-mono text-sm font-semibold', tomorrowChange >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+              {tomorrowChange >= 0 ? '+' : ''}{formatPct(tomorrowChange)}
+            </p>
+          </div>
+          <div className="mt-4">
+            <ModelConsensus current={current} />
+          </div>
+        </Card>
       </div>
+
+      <Card>
+        <h2 className="mb-1 text-lg font-semibold text-text-primary">Anomaly Overlay Chart</h2>
+        <p className="mb-4 text-sm text-text-secondary">Price action with highlighted anomaly zones for {selectedAsset}.</p>
+        {loading ? <div className="h-[280px] animate-pulse rounded-lg bg-surface" /> : <PriceAreaChart data={chartData} anomalyPoints={anomalyPts} />}
+      </Card>
+
+      <Card>
+        <h2 className="mb-1 text-lg font-semibold text-text-primary">Risk Timeline</h2>
+        <p className="mb-4 text-sm text-text-secondary">Dynamic anomaly score trajectory with threshold awareness.</p>
+        {loading ? <div className="h-[220px] animate-pulse rounded-lg bg-surface" /> : <RiskScoreChart data={chartData} />}
+      </Card>
+
+      <Card>
+        <div className="mb-4 flex items-center gap-2">
+          <Activity className="h-4 w-4 text-brand-blue-dim" />
+          <h2 className="text-lg font-semibold text-text-primary">Recent Anomaly Events</h2>
+        </div>
+        <AnomalyTable events={historical?.events ?? []} loading={loading} maxRows={8} />
+      </Card>
     </div>
   )
 }

@@ -33,6 +33,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from statsmodels.tsa.api import VAR
 from statsmodels.tsa.stattools import grangercausalitytests, adfuller
+from features import ASSETS
 
 warnings.filterwarnings("ignore")
 
@@ -49,8 +50,6 @@ ROOT_DIR      = Path(__file__).resolve().parents[2]
 PROCESSED_DIR = ROOT_DIR / "backend" / "data" / "processed"
 RESULTS_DIR   = ROOT_DIR / "backend" / "results" / "var"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-
-ASSETS = ["SP500", "VIX", "BTC", "GOLD", "NASDAQ", "TESLA"]
 
 # Common asset combinations for VAR
 VAR_COMBINATIONS = [

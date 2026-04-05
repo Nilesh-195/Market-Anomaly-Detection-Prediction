@@ -79,6 +79,11 @@ PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 ASSETS = ["SP500", "VIX", "BTC", "GOLD", "NASDAQ", "TESLA"]
 
 
+def make_sequences(X: np.ndarray, window: int) -> np.ndarray:
+    """Build sliding window sequences from feature array."""
+    return np.array([X[i: i + window] for i in range(len(X) - window + 1)])
+
+
 # ── Helper: rolling Z-score ───────────────────────────────────────────────────
 def _rolling_zscore(series: pd.Series, window: int) -> pd.Series:
     mean = series.rolling(window, min_periods=window // 2).mean()

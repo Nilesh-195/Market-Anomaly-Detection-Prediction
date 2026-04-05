@@ -13,7 +13,7 @@ export default function Layout({
   const [period, setPeriod] = useState(PERIODS[3]) // 1Y default
 
   return (
-    <div className="min-h-screen bg-page-bg text-text-primary">
+    <div className="relative min-h-screen bg-page-bg text-text-primary">
       <Navbar
         selectedAsset={selectedAsset}
         onAssetChange={onAssetChange}
@@ -30,7 +30,7 @@ export default function Layout({
         sp500Score={sp500Score}
       />
       <motion.main
-        className="pt-16 pl-[220px] transition-all duration-200"
+        className="relative pt-16 pl-[220px] transition-all duration-200"
         layout
       >
         <div className="max-w-[1400px] mx-auto p-6">

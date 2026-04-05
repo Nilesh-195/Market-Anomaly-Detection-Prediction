@@ -25,6 +25,16 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
+import pickle
+from pathlib import Path
+import logging
+
+from features import load_all_features
+
+logger = logging.getLogger(__name__)
+MODEL_DIR = Path(__file__).parent.parent / "models"
+
+
 
 class QuantileRegressionLoss(nn.Module):
     """Quantile regression loss for 3 quantiles (lower, median, upper)."""
@@ -100,10 +110,11 @@ class LSTMSeq2Seq(nn.Module):
             nn.Linear(hidden_size // 2, self.num_quantiles),
         )
 
-    def forward(self, x, target=None):
+    def forward(self, x, last_target, target=None):
         """
         Args:
-            x: (batch, lookback, 1) - past 30 days of prices
+            x: (batch, lookback, n_features) - past 30 days of features
+            last_target: (batch, 1, 1) - the last known target value (for decoding)
             target: (batch, horizon, 1) - next N days (for teacher forcing)
         Returns:
             output: (batch, horizon, 3) - predictions for 3 quantiles
@@ -114,8 +125,8 @@ class LSTMSeq2Seq(nn.Module):
         # Encode the past window
         encoder_out, (h_n, c_n) = self.encoder(x)  # (batch, lookback, hidden)
 
-        # Decoder seed: last observed price
-        decoder_input = x[:, -1:, :]  # (batch, 1, 1) — last price
+        # Decoder seed: last observed target
+        decoder_input = last_target  # (batch, 1, 1)
 
         outputs = []
         attention_weights_list = []
@@ -173,8 +184,17 @@ class TransformerForecaster(nn.Module):
         self.horizon = horizon
         self.num_quantiles = 3
 
+        # ── Variable Selection Network (Feature Attention) ──
+        self.var_selection = nn.Sequential(
+            nn.Linear(input_size, d_model),
+            nn.GELU(),
+            nn.Linear(d_model, input_size),
+            nn.Softmax(dim=-1)
+        )
+
         # Input projection
         self.input_proj = nn.Linear(input_size, d_model)
+        self.target_proj = nn.Linear(1, d_model)
 
         # Positional encoding
         self.pos_encoder = self._create_positional_encoding(lookback + horizon)
@@ -191,12 +211,16 @@ class TransformerForecaster(nn.Module):
             encoder_layer, num_layers=num_layers
         )
 
-        # Decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.ReLU(),
-            nn.Linear(dim_feedforward, self.num_quantiles),
+        # Autoregressive Decoder
+        self.decoder_layer = nn.TransformerDecoderLayer(
+            d_model=d_model, 
+            nhead=nhead, 
+            dim_feedforward=dim_feedforward, 
+            batch_first=True, 
+            dropout=dropout
         )
+        
+        self.output_proj = nn.Linear(d_model, self.num_quantiles)
 
     def _create_positional_encoding(self, max_len):
         """Create sinusoidal positional encoding."""
@@ -213,66 +237,88 @@ class TransformerForecaster(nn.Module):
             pe[:, 1::2] = torch.cos(position * div_term)
         return pe.unsqueeze(0)  # (1, max_len, d_model)
 
-    def forward(self, x):
+    def forward(self, x, last_target, target=None):
         """
         Args:
-            x: (batch, lookback, 1) - past 30 days
+            x: (batch, lookback, input_size) - past context
+            last_target: (batch, 1, 1) - decoder seed
+            target: None in standard loop
         Returns:
             output: (batch, horizon, 3) - quantile predictions
-            attention_weights: None
+            feature_weights: (batch, lookback, input_size) - variable selection map
         """
         batch_size = x.size(0)
         seq_len = x.size(1)
 
-        # Project to d_model
-        x = self.input_proj(x)  # (batch, lookback, d_model)
+        # 1. Dynamic Variable Selection
+        feature_weights = self.var_selection(x)
+        x_weighted = x * feature_weights
 
-        # Add positional encoding — FIX: use slicing only, no expand by batch_size
-        pos = self.pos_encoder[:, :seq_len, :].to(x.device)  # (1, seq_len, d_model)
-        x = x + pos  # broadcasts correctly: (batch, seq_len, d_model)
+        # 2. Encode
+        x_proj = self.input_proj(x_weighted)  # (batch, lookback, d_model)
+        pos = self.pos_encoder[:, :seq_len, :].to(x.device)
+        x_proj = x_proj + pos
 
-        # Transformer
-        transformer_out = self.transformer_encoder(x)  # (batch, lookback, d_model)
+        memory = self.transformer_encoder(x_proj)  # (batch, lookback, d_model)
 
-        # Decode for future steps - use average context
-        context = transformer_out.mean(dim=1)  # (batch, d_model)
-
+        # 3. Autoregressive Decode
+        decoder_input = self.target_proj(last_target)  # (batch, 1, d_model)
+        
         outputs = []
         for t in range(self.horizon):
-            pred = self.decoder(context.unsqueeze(1))  # (batch, 1, 3)
+            # Decode step
+            dec_out = self.decoder_layer(decoder_input, memory)  # (batch, 1, d_model)
+            pred = self.output_proj(dec_out)  # (batch, 1, 3)
             outputs.append(pred)
+            
+            # Autoregressive shift
+            if target is not None:
+                next_target = target[:, t:t+1, :]
+            else:
+                next_target = pred[:, :, 1:2]  # point estimate
+                
+            decoder_input = self.target_proj(next_target)
 
         output = torch.cat(outputs, dim=1)  # (batch, horizon, 3)
 
-        return output, None  # Attention weights would require model modification
+        return output, feature_weights
 
 
-def create_sequences(data, lookback=30, horizon=30):
+# Allowlist custom model classes so torch.load works with weights_only=True
+try:
+    torch.serialization.add_safe_globals([LSTMSeq2Seq, TransformerForecaster])
+except (AttributeError, RuntimeError):
+    pass
+
+
+def create_sequences(features, targets, lookback=30, horizon=30):
     """Create train sequences for LSTM/Transformer.
 
     Args:
-        data: (n_samples,) array of prices
+        features: (n_samples, n_features) array of macro/technical features
+        targets: (n_samples, 1) array of target values to predict
         lookback: Number of past steps to use
         horizon: Number of future steps to predict
 
     Returns:
-        X: (n_sequences, lookback, 1) - past prices
-        Y: (n_sequences, horizon, 1) - future prices
+        X: (n_sequences, lookback, n_features) - past features
+        Y: (n_sequences, horizon, 1) - future targets
     """
-    X, Y = [], []
-    for i in range(len(data) - lookback - horizon + 1):
-        X.append(data[i : i + lookback].reshape(-1, 1))
-        Y.append(data[i + lookback : i + lookback + horizon].reshape(-1, 1))
-    return np.array(X), np.array(Y)
+    X, Y, last_Y = [], [], []
+    for i in range(len(features) - lookback - horizon + 1):
+        X.append(features[i : i + lookback])
+        Y.append(targets[i + lookback : i + lookback + horizon].reshape(-1, 1))
+        last_Y.append(targets[i + lookback - 1 : i + lookback].reshape(-1, 1))
+    return np.array(X), np.array(Y), np.array(last_Y)
 
 
 def train_lstm_seq2seq(
-    close_prices, asset_name, lookback=30, horizon=30, epochs=50, batch_size=32
+    df, asset_name, lookback=30, horizon=30, epochs=50, batch_size=32
 ):
     """Train LSTM Seq2Seq model.
 
     Args:
-        close_prices: (n_samples,) close prices
+        df: DataFrame containing all features + target (Close)
         asset_name: Asset name for logging
         lookback: Past window size
         horizon: Future prediction horizon
@@ -281,36 +327,55 @@ def train_lstm_seq2seq(
 
     Returns:
         model: Trained model
-        scaler: MinMax scaler (min, max values)
+        scaler: Scaler info for target
+        scaler_x: Scaler object for features
+        feature_cols: List of features used
     """
-    # Convert to log returns to make data stationary
+    from sklearn.preprocessing import StandardScaler
+
+    close_prices = df['Close'].values
     returns = np.log(close_prices[1:] / close_prices[:-1])
-    mean_val = returns.mean()
-    std_val = returns.std()
-    normalized = (returns - mean_val) / (std_val + 1e-8)
+    mean_target = returns.mean()
+    std_target = returns.std()
+    target_normalized = (returns - mean_target) / (std_target + 1e-8)
+    
+    # Feature engineering for Multi-variate input
+    # Ignore dates, prices, and volumes directly to avoid look-ahead leakage
+    drop_cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    feature_cols = [c for c in df.columns if c not in drop_cols]
+    
+    # Since we are predicting log returns directly, we shift features by 1 
+    # to align past feature context with next-step return targets
+    feature_df = df[feature_cols].iloc[1:].fillna(0)
+    
+    scaler_x = StandardScaler()
+    features_normalized = scaler_x.fit_transform(feature_df)
 
     # Create sequences
-    X, Y = create_sequences(normalized, lookback, horizon)
+    X, Y, last_Y = create_sequences(features_normalized, target_normalized, lookback, horizon)
 
     # Train/test split (70/30)
     split = int(0.7 * len(X))
     X_train, X_test = X[:split], X[split:]
     Y_train, Y_test = Y[:split], Y[split:]
+    last_Y_train, last_Y_test = last_Y[:split], last_Y[split:]
 
     # Convert to torch tensors
     X_train = torch.FloatTensor(X_train)
     Y_train = torch.FloatTensor(Y_train)
+    last_Y_train = torch.FloatTensor(last_Y_train)
     X_test = torch.FloatTensor(X_test)
     Y_test = torch.FloatTensor(Y_test)
+    last_Y_test = torch.FloatTensor(last_Y_test)
 
     # DataLoader
-    train_dataset = TensorDataset(X_train, Y_train)
+    train_dataset = TensorDataset(X_train, Y_train, last_Y_train)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # Model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model = LSTMSeq2Seq(
-        input_size=1,
+        input_size=len(feature_cols),
         hidden_size=64,
         num_layers=2,
         lookback=lookback,
@@ -333,11 +398,13 @@ def train_lstm_seq2seq(
         model.train()
         train_loss = 0.0
 
-        for X_batch, Y_batch in train_loader:
-            X_batch, Y_batch = X_batch.to(device), Y_batch.to(device)
+        for X_batch, Y_batch, last_Y_batch in train_loader:
+            X_batch = X_batch.to(device)
+            Y_batch = Y_batch.to(device)
+            last_Y_batch = last_Y_batch.to(device)
 
             optimizer.zero_grad()
-            output, _ = model(X_batch, Y_batch)
+            output, _ = model(X_batch, last_Y_batch, Y_batch)
             loss = criterion(output, Y_batch.squeeze(-1))  # FIX: squeeze (batch,horizon,1)->(batch,horizon)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -352,7 +419,8 @@ def train_lstm_seq2seq(
         with torch.no_grad():
             X_test_device = X_test.to(device)
             Y_test_device = Y_test.to(device)
-            output_test, _ = model(X_test_device)
+            last_Y_test_device = last_Y_test.to(device)
+            output_test, _ = model(X_test_device, last_Y_test_device)
             val_loss = criterion(output_test, Y_test_device.squeeze(-1)).item()  # FIX: squeeze
 
         scheduler.step(val_loss)
@@ -374,17 +442,17 @@ def train_lstm_seq2seq(
             print(f"[{asset_name}] LSTM early stopping at epoch {epoch+1}")
             break
 
-    scaler = {"mean": float(mean_val), "std": float(std_val), "mode": "returns"}
-    return model.cpu(), scaler
+    scaler = {"mean": float(mean_target), "std": float(std_target), "mode": "returns"}
+    return model.cpu(), scaler, scaler_x, feature_cols
 
 
 def train_transformer(
-    close_prices, asset_name, lookback=30, horizon=30, epochs=50, batch_size=32
+    df, asset_name, lookback=30, horizon=30, epochs=50, batch_size=32
 ):
     """Train Transformer model (similar to LSTM).
 
     Args:
-        close_prices: (n_samples,) close prices
+        df: DataFrame containing all features + target (Close)
         asset_name: Asset name for logging
         lookback: Past window size
         horizon: Future prediction horizon
@@ -393,36 +461,52 @@ def train_transformer(
 
     Returns:
         model: Trained model
-        scaler: MinMax scaler
+        scaler: Scaler info for target
+        scaler_x: Scaler object for features
+        feature_cols: List of features used
     """
-    # Convert to log returns
+    from sklearn.preprocessing import StandardScaler
+
+    close_prices = df['Close'].values
     returns = np.log(close_prices[1:] / close_prices[:-1])
-    mean_val = returns.mean()
-    std_val = returns.std()
-    normalized = (returns - mean_val) / (std_val + 1e-8)
+    mean_target = returns.mean()
+    std_target = returns.std()
+    target_normalized = (returns - mean_target) / (std_target + 1e-8)
+    
+    # Feature engineering for Multi-variate input
+    drop_cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+    feature_cols = [c for c in df.columns if c not in drop_cols]
+    
+    feature_df = df[feature_cols].iloc[1:].fillna(0)
+    
+    scaler_x = StandardScaler()
+    features_normalized = scaler_x.fit_transform(feature_df)
 
     # Create sequences
-    X, Y = create_sequences(normalized, lookback, horizon)
+    X, Y, last_Y = create_sequences(features_normalized, target_normalized, lookback, horizon)
 
     # Train/test split
     split = int(0.7 * len(X))
     X_train, X_test = X[:split], X[split:]
     Y_train, Y_test = Y[:split], Y[split:]
+    last_Y_train, last_Y_test = last_Y[:split], last_Y[split:]
 
     # Convert to torch tensors
     X_train = torch.FloatTensor(X_train)
     Y_train = torch.FloatTensor(Y_train)
+    last_Y_train = torch.FloatTensor(last_Y_train)
     X_test = torch.FloatTensor(X_test)
     Y_test = torch.FloatTensor(Y_test)
+    last_Y_test = torch.FloatTensor(last_Y_test)
 
     # DataLoader
-    train_dataset = TensorDataset(X_train, Y_train)
+    train_dataset = TensorDataset(X_train, Y_train, last_Y_train)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
 
     # Model
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
     model = TransformerForecaster(
-        input_size=1,
+        input_size=len(feature_cols),
         d_model=64,
         nhead=4,
         num_layers=2,
@@ -447,12 +531,14 @@ def train_transformer(
         model.train()
         train_loss = 0.0
 
-        for X_batch, Y_batch in train_loader:
-            X_batch, Y_batch = X_batch.to(device), Y_batch.to(device)
+        for X_batch, Y_batch, last_Y_batch in train_loader:
+            X_batch = X_batch.to(device)
+            Y_batch = Y_batch.to(device)
+            last_Y_batch = last_Y_batch.to(device)
 
             optimizer.zero_grad()
-            output, _ = model(X_batch)
-            loss = criterion(output, Y_batch.squeeze(-1))  # FIX: squeeze (batch,horizon,1)->(batch,horizon)
+            output, _ = model(X_batch, last_Y_batch, Y_batch)
+            loss = criterion(output, Y_batch.squeeze(-1))
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
@@ -466,8 +552,9 @@ def train_transformer(
         with torch.no_grad():
             X_test_device = X_test.to(device)
             Y_test_device = Y_test.to(device)
-            output_test, _ = model(X_test_device)
-            val_loss = criterion(output_test, Y_test_device.squeeze(-1)).item()  # FIX: squeeze
+            last_Y_test_device = last_Y_test.to(device)
+            output_test, _ = model(X_test_device, last_Y_test_device)
+            val_loss = criterion(output_test, Y_test_device.squeeze(-1)).item()
 
         scheduler.step(val_loss)
 
@@ -488,18 +575,19 @@ def train_transformer(
             print(f"[{asset_name}] Transformer early stopping at epoch {epoch+1}")
             break
 
-    scaler = {"mean": float(mean_val), "std": float(std_val), "mode": "returns"}
-    return model.cpu(), scaler
+    scaler = {"mean": float(mean_target), "std": float(std_target), "mode": "returns"}
+    return model.cpu(), scaler, scaler_x, feature_cols
 
 
-def forecast_dl_model(model, last_prices, horizon=30, scaler=None, model_type="lstm"):
+def forecast_dl_model(model, features, last_target, horizon=30, scaler=None, model_type="lstm"):
     """Generate forecast from trained DL model.
 
     Args:
         model: Trained LSTM or Transformer model
-        last_prices: (lookback,) last N prices (normalized)
+        features: (lookback, n_features) normalized features
+        last_target: (1,) normalized last target value (for LSTM seed)
         horizon: Prediction horizon
-        scaler: MinMax scaler info
+        scaler: Scaler info
         model_type: "lstm" or "transformer"
 
     Returns:
@@ -511,12 +599,14 @@ def forecast_dl_model(model, last_prices, horizon=30, scaler=None, model_type="l
     model.eval()
 
     with torch.no_grad():
-        X = torch.FloatTensor(last_prices).unsqueeze(0)  # (1, lookback, 1)
+        X = torch.FloatTensor(features).unsqueeze(0)  # (1, lookback, n_features)
+        LT = torch.FloatTensor(last_target).unsqueeze(0).unsqueeze(-1) # (1, 1, 1)
 
         if model_type == "lstm":
-            output, attention = model(X)  # (1, horizon, 3), (1, horizon, lookback)
+            output, attention = model(X, LT)  # (1, horizon, 3), (1, horizon, lookback)
         else:
-            output, attention = model(X)  # (1, horizon, 3), None
+            output, attention = model(X, LT)  # (1, horizon, 3), (1, lookback, input_size) feature weights
+
 
         # Extract quantiles (lower_95, point, upper_95)
         output = output.numpy().squeeze(0)  # (horizon, 3)
@@ -535,3 +625,279 @@ def forecast_dl_model(model, last_prices, horizon=30, scaler=None, model_type="l
         upper = upper * range_val + min_val
 
     return point, lower, upper, attention
+
+"""
+Forecasting Functions for DL Models
+====================================
+High-level interface for LSTM, Transformer, and XGBoost forecasting
+
+Provides:
+  - lstm_seq2seq_forecast()
+  - transformer_forecast()
+  - xgboost_forecast()
+
+Each returns forecast, confidence intervals, and explainability metrics
+"""
+
+import numpy as np
+import pandas as pd
+import torch
+import pickle
+from pathlib import Path
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+# Allowlist custom model classes so torch.load works with weights_only=True as well
+try:
+    torch.serialization.add_safe_globals([LSTMSeq2Seq, TransformerForecaster])
+except AttributeError:
+    pass  # Older torch versions don't have add_safe_globals
+
+# Model paths
+MODEL_DIR = Path(__file__).parent.parent / "models"
+
+
+def _load_dl_model(asset, model_name):
+    """Load LSTM/Transformer model.
+
+    Args:
+        asset: Asset name (e.g., 'SP500')
+        model_name: 'lstm_seq2seq' or 'transformer'
+
+    Returns:
+        model: PyTorch model
+        meta: Scaler info {"min": float, "max": float}
+    """
+    model_path = MODEL_DIR / asset / f"{model_name}.pt"
+    meta_path = MODEL_DIR / asset / f"{model_name}_meta.pkl"
+
+    if not model_path.exists():
+        raise FileNotFoundError(f"Model not found: {model_path}")
+
+    # weights_only=False needed to load full model objects (PyTorch 2.6+)
+    model = torch.load(model_path, map_location='cpu', weights_only=False)
+    model.eval()
+
+    if meta_path.exists():
+        with open(meta_path, 'rb') as f:
+            meta = pickle.load(f)
+    else:
+        meta = None
+
+    return model, meta
+
+
+def lstm_seq2seq_forecast(asset, horizon=30):
+    """Generate LSTM Seq2Seq forecast for an asset.
+
+    Args:
+        asset: Asset name (e.g., 'SP500')
+        horizon: Forecast horizon in days (default 30)
+
+    Returns:
+        dict with forecast, lower_95, upper_95 (or empty dict if model unavailable)
+    """
+    try:
+        if horizon < 1:
+            raise ValueError("horizon must be >= 1")
+
+        model, meta = _load_dl_model(asset, 'lstm_seq2seq')
+        features_data = load_all_features()
+        if asset not in features_data:
+            raise ValueError(f"No feature data found for {asset}")
+
+        df = features_data[asset]
+        lookback = int(getattr(model, "lookback", 30))
+        if len(df) < lookback + 2:
+            raise ValueError(f"Insufficient history for {asset}: need at least {lookback + 2} rows")
+
+        feature_cols = meta.get("feature_cols") if isinstance(meta, dict) else None
+        if not feature_cols:
+            drop_cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+            feature_cols = [c for c in df.columns if c not in drop_cols]
+
+        feature_window = df.reindex(columns=feature_cols, fill_value=0).iloc[-lookback:].fillna(0)
+        scaler_x = meta.get("scaler_x") if isinstance(meta, dict) else None
+        if scaler_x is not None:
+            x_np = scaler_x.transform(feature_window)
+        else:
+            x_np = feature_window.values
+        x_np = np.asarray(x_np, dtype=np.float32)
+
+        close = df["Close"].values
+        log_returns = np.log(close[1:] / close[:-1])
+
+        scaler = meta.get("scaler", {}) if isinstance(meta, dict) else {}
+        mean_r = float(scaler.get("mean", 0.0))
+        std_r = float(scaler.get("std", 1.0))
+        last_ret_norm = float((log_returns[-1] - mean_r) / (std_r + 1e-8))
+
+        x_t = torch.from_numpy(x_np).unsqueeze(0)
+        last_t = torch.tensor([[[last_ret_norm]]], dtype=torch.float32)
+
+        model.eval()
+        with torch.no_grad():
+            output, attention = model(x_t, last_t)
+
+        out = output.detach().cpu().numpy().squeeze(0)
+        point_r = out[:, 1] * (std_r + 1e-8) + mean_r
+        lower_r = out[:, 0] * (std_r + 1e-8) + mean_r
+        upper_r = out[:, 2] * (std_r + 1e-8) + mean_r
+
+        forecast, lower_95, upper_95 = [], [], []
+        prev_point = float(close[-1])
+        prev_lower = float(close[-1])
+        prev_upper = float(close[-1])
+
+        n_native = len(point_r)
+        n_required = int(horizon)
+        for i in range(n_required):
+            idx = i if i < n_native else n_native - 1
+            prev_point = prev_point * float(np.exp(point_r[idx]))
+            prev_lower = prev_lower * float(np.exp(lower_r[idx]))
+            prev_upper = prev_upper * float(np.exp(upper_r[idx]))
+            forecast.append(float(prev_point))
+            lower_95.append(float(prev_lower))
+            upper_95.append(float(prev_upper))
+
+        # Build business-day future dates
+        dates = []
+        d = pd.Timestamp(df.index[-1])
+        while len(dates) < n_required:
+            d += pd.Timedelta(days=1)
+            if d.weekday() < 5:
+                dates.append(d.strftime("%Y-%m-%d"))
+
+        attention_weights = attention.detach().cpu().numpy().squeeze(0).tolist()
+
+        return {
+            "asset": asset,
+            "date": str(pd.Timestamp(df.index[-1]).date()),
+            "method": "lstm",
+            "forecast": forecast,
+            "lower_95": lower_95,
+            "upper_95": upper_95,
+            "dates": dates,
+            "attention_weights": attention_weights,
+            "model_info": {
+                "type": "lstm_seq2seq",
+                "mode": scaler.get("mode", "returns"),
+                "lookback": lookback,
+            },
+        }
+    except (FileNotFoundError, Exception) as e:
+        logger.warning(f"LSTM Seq2Seq forecast unavailable for {asset}: {e}")
+        raise
+
+
+def transformer_forecast(asset, horizon=30):
+    """Generate Transformer forecast for an asset.
+
+    Args:
+        asset: Asset name (e.g., 'SP500')
+        horizon: Forecast horizon in days (default 30)
+
+    Returns:
+        dict with forecast, lower_95, upper_95 (or empty dict if model unavailable)
+    """
+    try:
+        if horizon < 1:
+            raise ValueError("horizon must be >= 1")
+
+        model, meta = _load_dl_model(asset, 'transformer')
+        features_data = load_all_features()
+        if asset not in features_data:
+            raise ValueError(f"No feature data found for {asset}")
+
+        df = features_data[asset]
+        lookback = int(getattr(model, "lookback", 30))
+        if len(df) < lookback + 2:
+            raise ValueError(f"Insufficient history for {asset}: need at least {lookback + 2} rows")
+
+        feature_cols = meta.get("feature_cols") if isinstance(meta, dict) else None
+        if not feature_cols:
+            drop_cols = ["Date", "Open", "High", "Low", "Close", "Volume"]
+            feature_cols = [c for c in df.columns if c not in drop_cols]
+
+        feature_window = df.reindex(columns=feature_cols, fill_value=0).iloc[-lookback:].fillna(0)
+        scaler_x = meta.get("scaler_x") if isinstance(meta, dict) else None
+        if scaler_x is not None:
+            x_np = scaler_x.transform(feature_window)
+        else:
+            x_np = feature_window.values
+        x_np = np.asarray(x_np, dtype=np.float32)
+
+        close = df["Close"].values
+        log_returns = np.log(close[1:] / close[:-1])
+
+        scaler = meta.get("scaler", {}) if isinstance(meta, dict) else {}
+        mean_r = float(scaler.get("mean", 0.0))
+        std_r = float(scaler.get("std", 1.0))
+        last_ret_norm = float((log_returns[-1] - mean_r) / (std_r + 1e-8))
+
+        x_t = torch.from_numpy(x_np).unsqueeze(0)
+        last_t = torch.tensor([[[last_ret_norm]]], dtype=torch.float32)
+
+        model.eval()
+        with torch.no_grad():
+            output, feature_weights = model(x_t, last_t)
+
+        out = output.detach().cpu().numpy().squeeze(0)
+        point_r = out[:, 1] * (std_r + 1e-8) + mean_r
+        lower_r = out[:, 0] * (std_r + 1e-8) + mean_r
+        upper_r = out[:, 2] * (std_r + 1e-8) + mean_r
+
+        forecast, lower_95, upper_95 = [], [], []
+        prev_point = float(close[-1])
+        prev_lower = float(close[-1])
+        prev_upper = float(close[-1])
+
+        n_native = len(point_r)
+        n_required = int(horizon)
+        for i in range(n_required):
+            idx = i if i < n_native else n_native - 1
+            prev_point = prev_point * float(np.exp(point_r[idx]))
+            prev_lower = prev_lower * float(np.exp(lower_r[idx]))
+            prev_upper = prev_upper * float(np.exp(upper_r[idx]))
+            forecast.append(float(prev_point))
+            lower_95.append(float(prev_lower))
+            upper_95.append(float(prev_upper))
+
+        dates = []
+        d = pd.Timestamp(df.index[-1])
+        while len(dates) < n_required:
+            d += pd.Timedelta(days=1)
+            if d.weekday() < 5:
+                dates.append(d.strftime("%Y-%m-%d"))
+
+        fw = feature_weights.detach().cpu().numpy().squeeze(0)
+        mean_weights = fw.mean(axis=0) if fw.ndim == 2 else fw
+        feature_importance = {
+            str(col): float(w) for col, w in zip(feature_cols, mean_weights)
+        }
+        feature_importance = dict(
+            sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)[:15]
+        )
+
+        return {
+            "asset": asset,
+            "date": str(pd.Timestamp(df.index[-1]).date()),
+            "method": "transformer",
+            "forecast": forecast,
+            "lower_95": lower_95,
+            "upper_95": upper_95,
+            "dates": dates,
+            "feature_weights": feature_importance,
+            "model_info": {
+                "type": "transformer",
+                "mode": scaler.get("mode", "returns"),
+                "lookback": lookback,
+            },
+        }
+    except (FileNotFoundError, Exception) as e:
+        logger.warning(f"Transformer forecast unavailable for {asset}: {e}")
+        raise
+
+
