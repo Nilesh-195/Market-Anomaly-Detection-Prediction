@@ -45,8 +45,12 @@ export function useMarketData(ticker, activePage = 'dashboard') {
         criticalTasks.push(fetchPriceForecast(ticker, 30, 'auto'))
       }
 
-      if (activePage === 'historical') {
-        criticalTasks.push(fetchHistoricalAnomalies(ticker, 50))
+      if (activePage === 'historical' || activePage === 'evaluation') {
+        criticalTasks.push(fetchHistoricalAnomalies(ticker, activePage === 'evaluation' ? 250 : 50))
+      }
+      
+      if (activePage === 'evaluation') {
+         criticalTasks.push(fetchEvaluation())
       }
 
       const critical = await Promise.allSettled(criticalTasks)
@@ -57,8 +61,12 @@ export function useMarketData(ticker, activePage = 'dashboard') {
         setFromSettled(critical[2], setPriceForecast)
       }
 
-      if (activePage === 'historical') {
+      if (activePage === 'historical' || activePage === 'evaluation') {
         setFromSettled(critical[2], setHistorical)
+      }
+      
+      if (activePage === 'evaluation') {
+        setFromSettled(critical[3], setEvaluation)
       }
 
       // Unblock UI as soon as critical data is available.

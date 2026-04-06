@@ -1,10 +1,11 @@
 import { motion } from 'framer-motion'
 import { Badge } from '../ui/Badge'
+import clsx from 'clsx'
 import { SkeletonRow } from '../ui/Skeleton'
 import { formatDate, formatScore } from '../../utils/formatters'
 import { AlertCircle } from 'lucide-react'
 
-export default function AnomalyTable({ events = [], loading = false, maxRows = 8 }) {
+export default function AnomalyTable({ events = [], loading = false, maxRows = 8, selectedEvent = null, onRowClick = null }) {
   const rows = events.slice(0, maxRows)
 
   return (
@@ -47,7 +48,11 @@ export default function AnomalyTable({ events = [], loading = false, maxRows = 8
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     transition={{ delay: i * 0.04 }}
-                    className="border-b border-card-border/50 hover:bg-surface transition-colors"
+                    onClick={() => onRowClick && onRowClick(ev)}
+                    className={clsx("border-b border-card-border/50 transition-colors", 
+                      onRowClick ? "cursor-pointer" : "",
+                      selectedEvent?.date === ev.date ? "bg-brand-blue/10 border-brand-blue/30" : "hover:bg-surface"
+                    )}
                   >
                     <td className="py-2.5 px-2 font-mono text-text-secondary text-xs">
                       {formatDate(ev.date, 'MMM dd, yyyy')}

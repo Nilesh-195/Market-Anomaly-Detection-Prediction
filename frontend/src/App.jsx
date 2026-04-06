@@ -1,11 +1,14 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import Layout from './components/layout/Layout'
 import { ToastContainer } from './components/ui/Toast'
+import Landing from './pages/Landing'
 import Dashboard from './pages/Dashboard'
+import Anomalies from './pages/Anomalies'
 import Forecast from './pages/Forecast'
 import Historical from './pages/Historical'
 import Regime from './pages/Regime'
-import AdvancedAnomaly from './pages/AdvancedAnomaly'
+import Evaluation from './pages/Evaluation'
 import { useMarketData } from './hooks/useMarketData'
 import { useAutoRefresh } from './hooks/useAutoRefresh'
 
@@ -13,8 +16,18 @@ let _toastId = 0
 
 export default function App() {
   const [selectedAsset, setSelectedAsset] = useState('SP500')
-  const [activePage, setActivePage] = useState('dashboard')
   const [toasts, setToasts] = useState([])
+  const location = useLocation()
+  
+  const getActivePageFromPath = (path) => {
+    const segments = path.split('/')
+    if (segments.length >= 3 && segments[1] === 'app') {
+      return segments[2]
+    }
+    return 'dashboard'
+  }
+  
+  const activePage = getActivePageFromPath(location.pathname)
 
   const {
     current, historical, forecast, priceForecast,
@@ -37,72 +50,99 @@ export default function App() {
 
   const sp500Score = summary?.assets?.find?.(s => s?.asset === 'SP500')?.anomaly_score ?? null
 
-  const renderPage = () => {
-    switch (activePage) {
-      case 'forecast':
-        return (
-          <Forecast
-            priceForecast={priceForecast}
-            selectedAsset={selectedAsset}
-            loading={loading}
-            error={error}
-          />
-        )
-      case 'historical':
-        return (
-          <Historical
-            historical={historical}
-            selectedAsset={selectedAsset}
-            loading={loading}
-            error={error}
-          />
-        )
-      case 'regime':
-        return (
-          <Regime
-            asset={selectedAsset}
-            loading={loading}
-          />
-        )
-      case 'advanced-anomaly':
-        return (
-          <AdvancedAnomaly
-            selectedAsset={selectedAsset}
-            loading={loading}
-          />
-        )
-      default:
-        return (
-          <Dashboard
-            current={current}
-            historical={historical}
-            forecast={forecast}
-            priceForecast={priceForecast}
-            evaluation={evaluation}
-            comparison={comparison}
-            loading={loading}
-            error={error}
-            selectedAsset={selectedAsset}
-          />
-        )
-    }
-  }
-
   return (
     <>
-      <Layout
-        activePage={activePage}
-        onPageChange={setActivePage}
-        selectedAsset={selectedAsset}
-        onAssetChange={setSelectedAsset}
-        apiOnline={apiOnline}
-        loading={loading}
-        onRefresh={refresh}
-        lastUpdated={lastUpdated}
-        sp500Score={sp500Score}
-      >
-        {renderPage()}
-      </Layout>
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route
+          path="/app"
+          element={
+            <Layout
+              selectedAsset={selectedAsset}
+              onAssetChange={setSelectedAsset}
+              apiOnline={apiOnline}
+              loading={loading}
+              onRefresh={refresh}
+              lastUpdated={lastUpdated}
+              sp500Score={sp500Score}
+            />
+          }
+        >
+          <Route index element={<Navigate to="/app/dashboard" replace />} />
+          <Route
+            path="dashboard"
+            element={
+              <Dashboard
+                current={current}
+                historical={historical}
+                forecast={forecast}
+                priceForecast={priceForecast}
+                evaluation={evaluation}
+                comparison={comparison}
+                summary={summary}
+                loading={loading}
+                error={error}
+                selectedAsset={selectedAsset}
+                onSelectAsset={setSelectedAsset}
+                apiOnline={apiOnline}
+                lastUpdated={lastUpdated}
+                onRefresh={refresh}
+              />
+            }
+          />
+          <Route
+            path="anomalies"
+            element={
+              <Anomalies
+                selectedAsset={selectedAsset}
+                loading={loading}
+              />
+            }
+          />
+          <Route
+            path="forecast"
+            element={
+              <Forecast
+                priceForecast={priceForecast}
+                selectedAsset={selectedAsset}
+                loading={loading}
+                error={error}
+              />
+            }
+          />
+          <Route
+            path="historical"
+            element={
+              <Historical
+                historical={historical}
+                selectedAsset={selectedAsset}
+                loading={loading}
+                error={error}
+              />
+            }
+          />
+          <Route
+            path="regime"
+            element={
+              <Regime
+                asset={selectedAsset}
+                loading={loading}
+              />
+            }
+          />
+          <Route
+            path="evaluation"
+            element={
+              <Evaluation
+                evaluation={evaluation}
+                historical={historical}
+                selectedAsset={selectedAsset}
+                loading={loading}
+              />
+            }
+          />
+        </Route>
+      </Routes>
 
       <ToastContainer toasts={toasts} removeToast={removeToast} />
     </>

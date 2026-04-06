@@ -4,38 +4,40 @@ export default {
   theme: {
     extend: {
       colors: {
-        'page-bg':      '#F2F6FB',  /** premium light backdrop */
-        'card-bg':      '#FFFFFF',  /** crisp white cards */
-        'card-border':  '#DBE4EF',  /** cool slate border */
-        'surface':      '#EDF2F8',  /** elevated light surface */
-        'surface-alt':  '#E7EEF7',
-        'hover':        '#EAF1F9',
-        'brand-blue':   '#0B3A63',  /** deep financial navy */
-        'brand-blue-dim':'#1A5F8E',
-        'risk-normal':  '#10B981',  /** Modern Emerald */
-        'risk-elevated':'#F59E0B',  /** Amber */
-        'risk-high':    '#EF4444',  /** Red */
-        'risk-extreme': '#B91C1C',  /** Deep Red */
-        'chart-blue':   '#1D6FDC',
-        'chart-purple': '#5B7FE4',
-        'chart-cyan':   '#159EC0',
+        'page-bg':      '#F7F8FA',  // Lighter gray background
+        'card-bg':      '#FFFFFF',
+        'card-border':  '#EAEBEE',  // Softer border
+        'surface':      '#F0F2F5',
+        'surface-alt':  '#E9EDF0',
+        'hover':        '#F5F7F9',
+        'brand-blue':   '#2563EB',  // A more vibrant blue
+        'brand-blue-dim':'#1D4ED8',
+        'risk-normal':  '#10B981',
+        'risk-elevated':'#F59E0B',
+        'risk-high':    '#EF4444',
+        'risk-extreme': '#B91C1C',
+        'chart-blue':   '#3B82F6',
+        'chart-purple': '#8B5CF6',
+        'chart-cyan':   '#06B6D4',
         'chart-green':  '#10B981',
         'chart-red':    '#EF4444',
-        'text-primary': '#0F1F33',  /** rich slate */
-        'text-secondary':'#44556B', /** muted steel */
-        'text-muted':   '#7C8BA1',  /** subtle labels */
+        'text-primary': '#111827',  // Darker for better contrast
+        'text-secondary':'#6B7280',
+        'text-muted':   '#9CA3AF',
       },
       fontFamily: {
         mono: ['IBM Plex Mono', 'SFMono-Regular', 'monospace'],
-        sans: ['Manrope', 'system-ui', 'sans-serif'],
+        sans: ['Inter', 'Manrope', 'system-ui', 'sans-serif'], // Using Inter as primary
       },
       boxShadow: {
-        'glass': '0 1px 1px rgba(148, 163, 184, 0.2), 0 12px 24px -12px rgba(15, 31, 51, 0.22)',
-        'float': '0 18px 36px -20px rgba(11, 58, 99, 0.4), 0 8px 18px -12px rgba(15, 31, 51, 0.3)',
+        'card': '0 1px 2px 0 rgb(0 0 0 / 0.05)',
+        'card-hover': '0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1)',
+        'lg': '0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1)',
       },
       borderRadius: {
-        xl: '12px',
-        '2xl': '16px',
+        lg: '0.5rem',
+        xl: '0.75rem',
+        '2xl': '1rem',
       },
       animation: {
         'pulse-slow': 'pulse 3s cubic-bezier(0.4,0,0.6,1) infinite',

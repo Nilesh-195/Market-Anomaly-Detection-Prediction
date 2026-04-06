@@ -13,9 +13,9 @@ export async function fetchCurrentAnalysis(ticker) {
   return data
 }
 
-export async function fetchHistoricalAnomalies(ticker, topN = 50) {
+export async function fetchHistoricalAnomalies(ticker, topN = 50, threshold = 60) {
   const { data } = await client.get(`/anomaly/historical/${ticker}`, {
-    params: { top_n: topN },
+    params: { top_n: topN, threshold },
   })
   return data
 }

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceArea,
@@ -18,13 +19,13 @@ const CustomTooltip = ({ active, payload, label }) => {
   if (!active || !payload?.length) return null
   const d = payload[0]?.payload
   return (
-    <div className="bg-white border border-card-border rounded-xl p-4 shadow-float animate-float-up min-w-[200px]">
+    <div className="bg-card-bg border border-card-border rounded-xl p-4 shadow-lg min-w-[200px]">
       <div className="text-text-secondary text-xs uppercase tracking-wider mb-3 font-semibold">{formatDate(label, 'MMM dd, yyyy')}</div>
       <div className="space-y-2">
         {payload.map((p, i) => (
           <div key={i} className="flex justify-between items-center gap-6 text-sm border-b border-card-border pb-2">
             <span className="text-text-secondary">{p.name}</span>
-            <span className="font-mono font-bold text-base" style={{ color: p.color }}>
+            <span className="font-mono font-bold text-base" style={{ color: p.color || COLOURS.textPrimary }}>
               {p.name === 'Price' ? formatPrice(p.value) : formatScore(p.value)}
             </span>
           </div>
@@ -42,13 +43,30 @@ const CustomTooltip = ({ active, payload, label }) => {
   )
 }
 
-export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
-  // Build a set of anomaly dates for fast lookup
-  const anomalyDates = new Set(anomalyPoints.map(a => a.date))
-  // For ReferenceDots we need the actual close value from chart_data
-  const anomalyDots = data.filter(d => anomalyDates.has(d.date) && d.close != null)
+export default function PriceAreaChart({ data = [], anomalyPoints = [], showWindows = true }) {
+  
+  // Compute window segments for ReferenceArea
+  const anomalyWindows = useMemo(() => {
+    if (!showWindows || !anomalyPoints.length || !data.length) return []
+    
+    return anomalyPoints.map(pt => {
+      if (pt.start_date && pt.end_date) {
+        return { x1: pt.start_date, x2: pt.end_date }
+      }
+      // Compute +/- 2 trading days if only 'date' is present
+      const eventDate = pt.date
+      const idx = data.findIndex(d => d.date === eventDate)
+      
+      if (idx === -1) return { x1: eventDate, x2: eventDate }
+
+      const startIdx = Math.max(0, idx - 2)
+      const endIdx = Math.min(data.length - 1, idx + 2)
+      return { x1: data[startIdx].date, x2: data[endIdx].date }
+    })
+  }, [data, anomalyPoints, showWindows])
+
   return (
-    <ResponsiveContainer width="100%" height={220}>
+    <ResponsiveContainer width="100%" height={280}>
       <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
         <defs>
           <linearGradient id="priceGrad" x1="0" y1="0" x2="0" y2="1">
@@ -71,16 +89,17 @@ export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
           axisLine={false} tickLine={false} width={64}
           domain={['auto', 'auto']}
         />
-        <Tooltip content={<CustomTooltip />} />
+        <Tooltip content={<CustomTooltip />} cursor={{ stroke: COLOURS.textMuted, strokeWidth: 1, strokeDasharray: '4 4' }} />
         
         {/* Draw Anomaly Bounds FIRST so area lines go over them */}
-        {anomalyDots.map((pt, i) => (
+        {anomalyWindows.map((win, i) => (
           <ReferenceArea
-            key={`anomaly-${i}`}
-            x1={pt.date}
-            x2={pt.date}
-            fill={COLOURS.riskExtreme}
+            key={`anomaly-win-${i}`}
+            x1={win.x1}
+            x2={win.x2}
+            fill="#EF4444" // Soft red/amber tint
             fillOpacity={0.15}
+            strokeOpacity={0}
           />
         ))}
 
@@ -88,8 +107,8 @@ export default function PriceAreaChart({ data = [], anomalyPoints = [] }) {
           type="monotone" dataKey="close" name="Price"
           stroke={COLOURS.chartBlue} strokeWidth={2.5}
           fill="url(#priceGrad)" dot={false} 
-          activeDot={{ r: 6, fill: COLOURS.chartBlue, stroke: '#fff', strokeWidth: 2, className: 'shadow-glass' }}
-          animationDuration={1200}
+          activeDot={{ r: 6, fill: COLOURS.chartBlue, stroke: '#fff', strokeWidth: 2, className: 'shadow-lg' }}
+          animationDuration={1000}
         />
       </AreaChart>
     </ResponsiveContainer>

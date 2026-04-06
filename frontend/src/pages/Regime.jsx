@@ -72,7 +72,13 @@ export default function Regime({ asset, loading: parentLoading }) {
   const stats = data?.regime_stats ?? {}
   const avgReturns = data?.avg_returns ?? {}
   const transitions = data?.transitions ?? {}
-  const timeline = (data?.timeline ?? []).slice(-252)
+  const timeline = data?.timeline ?? []
+
+  const chartWidth = useMemo(() => {
+    const points = timeline.length || 1
+    // Keep labels readable: minimum width plus ~4px per data point.
+    return Math.max(900, points * 4)
+  }, [timeline.length])
 
   const regimePeriods = useMemo(() => {
     const periods = []
@@ -163,12 +169,12 @@ export default function Regime({ asset, loading: parentLoading }) {
 
       <Card>
         <h2 className="mb-1 text-lg font-semibold text-text-primary">Regime Timeline</h2>
-        <p className="mb-4 text-sm text-text-secondary">Background colors map bull, bear, and crisis state transitions.</p>
+        <p className="mb-4 text-sm text-text-secondary">Background colors map bull, bear, and crisis state transitions. Scroll horizontally to explore the full history.</p>
         {isLoading ? (
           <div className="h-[320px] animate-pulse rounded-lg bg-surface" />
         ) : (
-          <ResponsiveContainer width="100%" height={320}>
-            <AreaChart data={timeline} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
+          <div className="overflow-x-auto pb-2">
+            <AreaChart width={chartWidth} height={320} data={timeline} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}>
               <defs>
                 <linearGradient id="regimeScoreGrad" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#1D6FDC" stopOpacity={0.32} />
@@ -188,14 +194,22 @@ export default function Regime({ asset, loading: parentLoading }) {
                   ifOverflow="extendDomain"
                 />
               ))}
-              <XAxis dataKey="date" tickFormatter={(value) => formatDate(value)} tick={{ fill: '#7C8BA1', fontSize: 11 }} tickLine={false} axisLine={false} />
+              <XAxis
+                dataKey="date"
+                interval="preserveStartEnd"
+                minTickGap={80}
+                tickFormatter={(value) => formatDate(value)}
+                tick={{ fill: '#7C8BA1', fontSize: 11 }}
+                tickLine={false}
+                axisLine={false}
+              />
               <YAxis domain={yDomain} tick={{ fill: '#7C8BA1', fontSize: 11 }} tickLine={false} axisLine={false} width={48} />
               <Tooltip content={<RegimeTooltip />} />
               <ReferenceLine y={60} stroke="#f59e0b" strokeDasharray="3 3" />
               <ReferenceLine y={75} stroke="#ef4444" strokeDasharray="3 3" />
               <Area type="monotone" dataKey="score" stroke="#0B3A63" strokeWidth={2.3} fill="url(#regimeScoreGrad)" />
             </AreaChart>
-          </ResponsiveContainer>
+          </div>
         )}
       </Card>
 
