@@ -20,9 +20,14 @@ export async function fetchHistoricalAnomalies(ticker, topN = 50, threshold = 60
   return data
 }
 
-export async function fetchAnomalyForecast(ticker, days = 10) {
+export async function fetchAnomalyForecast(ticker, days = 10, options = {}) {
+  const {
+    mode = 'hybrid',
+    method = 'hybrid',
+  } = options || {}
+
   const { data } = await client.get(`/anomaly/forecast/${ticker}`, {
-    params: { days },
+    params: { days, mode, method },
   })
   return data
 }

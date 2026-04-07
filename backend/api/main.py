@@ -943,20 +943,39 @@ def get_current_anomaly(asset: str):
 
 
 @app.get("/anomaly/forecast/{asset}", tags=["Anomaly Detection"])
-def get_anomaly_forecast(asset: str, days: int = 5):
+def get_anomaly_forecast(
+    asset: str,
+    days: int = 5,
+    mode: str = "hybrid",
+    method: str = "hybrid",
+):
     """
-    ARIMA forecast of anomaly scores.
+    Multi-model forecast of anomaly scores.
 
-    Forecasts future anomaly scores (not prices) using ARIMA.
+    Forecasts future anomaly risk scores (not prices) using baseline,
+    advanced, deep-learning composite, or hybrid signal modes.
 
     Parameters:
     - days: Forecast horizon (1-30, default: 5)
+    - mode: ensemble | advanced | dl | hybrid (default: hybrid)
+    - method: arima | ets | hybrid (default: hybrid)
     """
     a = _check_asset(asset)
     if not 1 <= days <= 30:
         raise HTTPException(status_code=400, detail="days must be between 1 and 30")
+
+    mode = (mode or "hybrid").strip().lower()
+    method = (method or "hybrid").strip().lower()
+    valid_modes = ["ensemble", "advanced", "dl", "hybrid"]
+    valid_methods = ["arima", "ets", "hybrid"]
+
+    if mode not in valid_modes:
+        raise HTTPException(status_code=400, detail=f"mode must be one of {valid_modes}")
+    if method not in valid_methods:
+        raise HTTPException(status_code=400, detail=f"method must be one of {valid_methods}")
+
     try:
-        return forecast_anomaly(a, days=days)
+        return forecast_anomaly(a, days=days, mode=mode, method=method)
     except Exception as e:
         log.error(f"forecast error for {a}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

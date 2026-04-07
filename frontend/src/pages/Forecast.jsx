@@ -107,7 +107,7 @@ export default function Forecast({
 
     Promise.allSettled([
       fetchHistoricalAnomalies(selectedAsset, 260),
-      fetchAnomalyForecast(selectedAsset, 10),
+      fetchAnomalyForecast(selectedAsset, 10, { mode: 'hybrid', method: 'hybrid' }),
       fetchCrashEvents(selectedAsset),
     ])
       .then(([histRes, riskRes, eventRes]) => {
@@ -378,7 +378,7 @@ export default function Forecast({
             {highRiskDays > 0 || peakRiskScore >= 60 ? 'Watchlist Active' : 'Risk Stable'}
           </Badge>
         </div>
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3">
           <div className="rounded-lg border border-card-border bg-white/70 px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.1em] text-text-muted">Next 10d High-Risk Days</p>
             <p className="mt-1 font-mono text-lg font-bold text-text-primary">
@@ -425,7 +425,7 @@ export default function Forecast({
         </Card>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[1.65fr_1fr]">
+      <div className="grid gap-6">
         <div className="space-y-6">
           <Card>
             <div className="mb-4 flex items-center justify-between gap-4">

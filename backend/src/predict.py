@@ -5,7 +5,7 @@ Generates predictions for a given asset:
 
   1. Current anomaly analysis  — latest ensemble score + per-model breakdown
     2. Advanced anomaly analysis — advanced ensemble + regime + dynamic 7-9 models (Phase 2)
-  3. 5-day anomaly forecast    — ARIMA on ensemble_score series
+    3. Multi-mode anomaly forecast (ensemble / advanced / dl / hybrid)
   4. Historical anomaly events — top anomaly windows from scores_all.parquet
   5. Regime timeline          — HMM market state history (Phase 2)
 
@@ -239,57 +239,263 @@ def regime_timeline(asset: str) -> dict:
     }
 
 
-# ── 2. 5-Day Forecast ──────────────────────────────────────────────────────────
-def forecast_anomaly(asset: str, days: int = 5) -> dict:
-    """ARIMA forecast of ensemble_score for next `days` trading days."""
+# ── 2. Multi-Mode Anomaly Forecast ────────────────────────────────────────────
+def _next_trading_dates(last_date: pd.Timestamp, days: int) -> list[str]:
+    dates = []
+    d = pd.Timestamp(last_date)
+    for _ in range(days):
+        d += timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        dates.append(str(d.date()))
+    return dates
+
+
+def _normalize_score_series(series: pd.Series) -> pd.Series:
+    s = pd.to_numeric(series, errors="coerce").dropna().astype(float)
+    if s.empty:
+        return s
+    # Baseline model scores are often in [0,1], advanced scores are usually [0,100].
+    if float(s.quantile(0.99)) <= 1.5:
+        s = s * 100.0
+    return s.clip(0.0, 100.0)
+
+
+def _series_forecast_arima(series: pd.Series, days: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     from statsmodels.tsa.arima.model import ARIMA
+
+    window = series.iloc[-252:] if len(series) > 252 else series
+    window = window.dropna()
+    if window.empty:
+        return np.zeros(days), np.zeros(days), np.zeros(days)
+
+    try:
+        model = ARIMA(window, order=(2, 1, 2))
+        fitted = model.fit()
+        fc = np.asarray(fitted.forecast(steps=days), dtype=float)
+        conf = fitted.get_forecast(steps=days).conf_int(alpha=0.2)
+        lo = np.asarray(conf.iloc[:, 0], dtype=float)
+        hi = np.asarray(conf.iloc[:, 1], dtype=float)
+    except Exception as e:
+        log.warning(f"ARIMA anomaly forecast failed ({e}); using robust naive fallback")
+        last = float(window.iloc[-1])
+        vol = float(window.diff().dropna().std()) if len(window) > 2 else 5.0
+        vol = 5.0 if not np.isfinite(vol) or vol <= 0 else vol
+        scale = np.sqrt(np.arange(1, days + 1, dtype=float))
+        fc = np.full(days, last, dtype=float)
+        band = 1.28 * vol * scale
+        lo = fc - band
+        hi = fc + band
+
+    return np.clip(fc, 0, 100), np.clip(lo, 0, 100), np.clip(hi, 0, 100)
+
+
+def _series_forecast_ets(series: pd.Series, days: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    from statsmodels.tsa.holtwinters import ExponentialSmoothing
+
+    window = series.iloc[-252:] if len(series) > 252 else series
+    window = window.dropna()
+    if window.empty:
+        return np.zeros(days), np.zeros(days), np.zeros(days)
+
+    try:
+        model = ExponentialSmoothing(
+            window,
+            trend="add",
+            damped_trend=True,
+            seasonal=None,
+            initialization_method="estimated",
+        )
+        fitted = model.fit(optimized=True)
+        fc = np.asarray(fitted.forecast(steps=days), dtype=float)
+
+        resid = (window - fitted.fittedvalues).dropna()
+        vol = float(resid.std()) if len(resid) > 3 else float(window.diff().dropna().std())
+        vol = 5.0 if not np.isfinite(vol) or vol <= 0 else vol
+        scale = np.sqrt(np.arange(1, days + 1, dtype=float))
+        band = 1.28 * vol * scale
+        lo = fc - band
+        hi = fc + band
+    except Exception as e:
+        log.warning(f"ETS anomaly forecast failed ({e}); using ARIMA fallback")
+        return _series_forecast_arima(series, days)
+
+    return np.clip(fc, 0, 100), np.clip(lo, 0, 100), np.clip(hi, 0, 100)
+
+
+def _blend_forecasts(
+    forecast_a: tuple[np.ndarray, np.ndarray, np.ndarray],
+    forecast_b: tuple[np.ndarray, np.ndarray, np.ndarray],
+    weight_a: float = 0.6,
+    weight_b: float = 0.4,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    fa, la, ua = forecast_a
+    fb, lb, ub = forecast_b
+    f = weight_a * fa + weight_b * fb
+    l = weight_a * la + weight_b * lb
+    u = weight_a * ua + weight_b * ub
+    return np.clip(f, 0, 100), np.clip(l, 0, 100), np.clip(u, 0, 100)
+
+
+def _build_mode_series(df: pd.DataFrame, mode: str) -> tuple[pd.Series, list[str], str]:
+    mode = (mode or "hybrid").strip().lower()
+
+    if mode == "ensemble":
+        return (
+            _normalize_score_series(df["ensemble_score"]),
+            ["ensemble_score"],
+            "Baseline ensemble (Z-Score + IForest + LSTM + Prophet)",
+        )
+
+    if mode == "advanced":
+        if "adv_ensemble" in df.columns:
+            models_used = ["adv_ensemble"]
+            for c in ["xgb_score", "hmm_score", "tcn_score", "vae_score", "at_score"]:
+                if c in df.columns:
+                    models_used.append(c)
+            return (
+                _normalize_score_series(df["adv_ensemble"]),
+                models_used,
+                "Advanced ensemble (baseline + advanced models)",
+            )
+        return (
+            _normalize_score_series(df["ensemble_score"]),
+            ["ensemble_score"],
+            "Advanced fallback: baseline ensemble",
+        )
+
+    if mode == "dl":
+        weighted = []
+        models_used = []
+        dl_weights = [
+            ("lstm_score", 0.35),
+            ("tcn_score", 0.30),
+            ("vae_score", 0.20),
+            ("at_score", 0.15),
+        ]
+        weight_sum = 0.0
+        for col, weight in dl_weights:
+            if col in df.columns:
+                weighted.append(_normalize_score_series(df[col]) * weight)
+                models_used.append(col)
+                weight_sum += weight
+
+        if weighted and weight_sum > 0:
+            combined = sum(weighted) / weight_sum
+            return combined.dropna(), models_used, "DL composite (LSTM/TCN/VAE/Anomaly Transformer)"
+
+        if "lstm_score" in df.columns:
+            return (
+                _normalize_score_series(df["lstm_score"]),
+                ["lstm_score"],
+                "DL fallback (LSTM only)",
+            )
+
+        return (
+            _normalize_score_series(df["ensemble_score"]),
+            ["ensemble_score"],
+            "DL fallback: baseline ensemble",
+        )
+
+    if mode == "hybrid":
+        adv_series, adv_models, _ = _build_mode_series(df, "advanced")
+        dl_series, dl_models, _ = _build_mode_series(df, "dl")
+        common_idx = adv_series.index.intersection(dl_series.index)
+
+        if common_idx.empty:
+            return adv_series, adv_models, "Hybrid fallback: advanced ensemble"
+
+        regime_series = df["hmm_regime"] if "hmm_regime" in df.columns else pd.Series(index=common_idx, dtype=object)
+        blended_vals = []
+        for ts in common_idx:
+            adv_v = float(adv_series.loc[ts])
+            dl_v = float(dl_series.loc[ts])
+            regime = str(regime_series.loc[ts]).lower() if ts in regime_series.index else ""
+
+            if regime == "crisis":
+                w_adv, w_dl = 0.45, 0.55
+            elif regime == "bull":
+                w_adv, w_dl = 0.60, 0.40
+            else:
+                w_adv, w_dl = 0.55, 0.45
+
+            blended_vals.append(np.clip(w_adv * adv_v + w_dl * dl_v, 0, 100))
+
+        blended = pd.Series(blended_vals, index=common_idx).astype(float)
+        models_used = sorted(set(adv_models + dl_models + ["dynamic_blend"]))
+        return blended, models_used, "Hybrid regime-aware blend (Advanced + DL)"
+
+    raise ValueError(f"Unknown forecast mode '{mode}'")
+
+
+def forecast_anomaly(asset: str, days: int = 5, mode: str = "hybrid", method: str = "hybrid") -> dict:
+    """
+    Forecast anomaly risk score for next `days` trading days.
+
+    mode:
+      - ensemble: baseline ensemble score
+      - advanced: advanced ensemble score
+      - dl: deep-learning composite score
+      - hybrid: regime-aware blend of advanced and DL scores
+
+    method:
+      - arima: ARIMA projection
+      - ets: exponential smoothing projection
+      - hybrid: blend of ARIMA and ETS projections
+    """
+    mode = (mode or "hybrid").strip().lower()
+    method = (method or "hybrid").strip().lower()
 
     scores_path = MODELS_DIR / asset / "scores_all.parquet"
     df = pd.read_parquet(scores_path)
     df.index = pd.to_datetime(df.index)
-    series = df["ensemble_score"].dropna()
+    df = df.sort_index()
 
-    # Fit ARIMA(2,1,2) on last 252 trading days (1 year)
-    window = series.iloc[-252:]
-    try:
-        model  = ARIMA(window, order=(2, 1, 2))
-        fitted = model.fit()
-        fc     = fitted.forecast(steps=days)
-        conf   = fitted.get_forecast(steps=days).conf_int(alpha=0.2)
-    except Exception as e:
-        log.warning(f"[{asset}] ARIMA failed ({e}) — using naive forecast")
-        last   = float(series.iloc[-1])
-        fc     = pd.Series([last] * days)
-        conf   = pd.DataFrame({"lower ensemble_score": [last] * days,
-                               "upper ensemble_score": [last] * days})
+    series, models_used, source_label = _build_mode_series(df, mode)
+    series = series.dropna()
 
-    last_date = df.index[-1]
-    dates = []
-    d = last_date
-    for _ in range(days):
-        d += timedelta(days=1)
-        while d.weekday() >= 5:          # skip weekends
-            d += timedelta(days=1)
-        dates.append(str(d.date()))
+    if series.empty:
+        raise ValueError(f"No usable anomaly score series for asset={asset}, mode={mode}")
+
+    if method == "arima":
+        f, l, u = _series_forecast_arima(series, days)
+    elif method == "ets":
+        f, l, u = _series_forecast_ets(series, days)
+    elif method == "hybrid":
+        arima_pack = _series_forecast_arima(series, days)
+        ets_pack = _series_forecast_ets(series, days)
+        f, l, u = _blend_forecasts(arima_pack, ets_pack, weight_a=0.6, weight_b=0.4)
+    else:
+        raise ValueError(f"Unknown forecast method '{method}'")
+
+    dates = _next_trading_dates(series.index[-1], days)
 
     forecast_points = []
     for i in range(days):
-        score   = float(np.clip(fc.iloc[i], 0, 100))
-        lo      = float(np.clip(conf.iloc[i, 0], 0, 100))
-        hi      = float(np.clip(conf.iloc[i, 1], 0, 100))
-        forecast_points.append({
-            "date":          dates[i],
-            "score":         round(score, 2),
-            "lower":         round(lo, 2),
-            "upper":         round(hi, 2),
-            "risk_label":    risk_label(score),
-        })
+        score = float(np.clip(f[i], 0, 100))
+        lo = float(np.clip(l[i], 0, 100))
+        hi = float(np.clip(u[i], 0, 100))
+        forecast_points.append(
+            {
+                "date": dates[i],
+                "score": round(score, 2),
+                "lower": round(lo, 2),
+                "upper": round(hi, 2),
+                "risk_label": risk_label(score),
+            }
+        )
 
     return {
-        "asset":     asset,
+        "asset": asset,
         "generated": str(datetime.now().date()),
-        "horizon":   days,
-        "forecast":  forecast_points,
+        "horizon": days,
+        "mode": mode,
+        "method": method,
+        "source_label": source_label,
+        "models_used": models_used,
+        "available_modes": ["ensemble", "advanced", "dl", "hybrid"],
+        "available_methods": ["arima", "ets", "hybrid"],
+        "forecast": forecast_points,
     }
 
 

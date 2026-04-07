@@ -20,6 +20,12 @@ import { formatDate, formatScore } from '../../utils/formatters'
 import { getRiskColor, getRiskLabel } from '../../utils/riskHelpers'
 
 const HORIZON_OPTIONS = [5, 10, 15, 30]
+const MODE_OPTIONS = [
+  { id: 'hybrid', label: 'Hybrid' },
+  { id: 'dl', label: 'DL Composite' },
+  { id: 'advanced', label: 'Advanced' },
+  { id: 'ensemble', label: 'Baseline' },
+]
 
 function getBadgeVariant(score) {
   if (score >= 75) return 'red'
@@ -28,8 +34,14 @@ function getBadgeVariant(score) {
   return 'green'
 }
 
-function isMatchingForecast(data, asset, days) {
-  return data?.asset === asset && Number(data?.horizon) === Number(days) && Array.isArray(data?.forecast)
+function isMatchingForecast(data, asset, days, mode) {
+  const dataMode = String(data?.mode || '').toLowerCase()
+  return (
+    data?.asset === asset
+    && Number(data?.horizon) === Number(days)
+    && dataMode === String(mode || '').toLowerCase()
+    && Array.isArray(data?.forecast)
+  )
 }
 
 function toDateSafe(value) {
@@ -50,7 +62,7 @@ function ForecastTooltip({ active, payload, label }) {
         {formatDate(label, 'MMM dd, yyyy')}
       </div>
       <div className="space-y-1.5 text-sm">
-        <div className="text-xs text-text-muted">{isObserved ? 'Observed (actual)' : 'Forecast (ARIMA)'}</div>
+        <div className="text-xs text-text-muted">{isObserved ? 'Observed (actual)' : 'Forecast (model-driven)'}</div>
         <div className="flex items-center justify-between gap-4">
           <span className="text-text-secondary">Score</span>
           <span className="font-mono font-bold" style={{ color: getRiskColor(score) }}>{formatScore(score)}</span>
@@ -76,17 +88,19 @@ function ForecastTooltip({ active, payload, label }) {
 }
 
 export default function AnomalyForecastPanel({ asset, initialForecast, latestObservation = null, defaultDays = 10 }) {
+  const defaultMode = String(initialForecast?.mode || 'hybrid').toLowerCase()
   const [selectedDays, setSelectedDays] = useState(defaultDays)
+  const [selectedMode, setSelectedMode] = useState(defaultMode)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [forecastData, setForecastData] = useState(
-    isMatchingForecast(initialForecast, asset, defaultDays) ? initialForecast : null
+    isMatchingForecast(initialForecast, asset, defaultDays, defaultMode) ? initialForecast : null
   )
 
   useEffect(() => {
     if (!asset) return
 
-    if (isMatchingForecast(initialForecast, asset, selectedDays)) {
+    if (isMatchingForecast(initialForecast, asset, selectedDays, selectedMode)) {
       setForecastData(initialForecast)
       setError(null)
       setLoading(false)
@@ -97,7 +111,7 @@ export default function AnomalyForecastPanel({ asset, initialForecast, latestObs
     setLoading(true)
     setError(null)
 
-    fetchAnomalyForecast(asset, selectedDays)
+    fetchAnomalyForecast(asset, selectedDays, { mode: selectedMode, method: 'hybrid' })
       .then((data) => {
         if (!active) return
         if (!Array.isArray(data?.forecast)) {
@@ -116,9 +130,11 @@ export default function AnomalyForecastPanel({ asset, initialForecast, latestObs
     return () => {
       active = false
     }
-  }, [asset, initialForecast, selectedDays])
+  }, [asset, initialForecast, selectedDays, selectedMode])
 
   const forecastPoints = Array.isArray(forecastData?.forecast) ? forecastData.forecast : []
+  const modeMeta = MODE_OPTIONS.find((item) => item.id === selectedMode)
+  const modelsUsed = Array.isArray(forecastData?.models_used) ? forecastData.models_used : []
 
   const chartData = useMemo(
     () => forecastPoints.map((point) => {
@@ -199,34 +215,53 @@ export default function AnomalyForecastPanel({ asset, initialForecast, latestObs
         <div>
           <h2 className="text-lg font-bold text-text-primary">Anomaly Prediction (Next {selectedDays} Days)</h2>
           <p className="mt-1 text-xs text-text-secondary">
-            ARIMA forecast of ensemble anomaly risk score with confidence interval.
+            {forecastData?.source_label || 'Hybrid forecast using advanced + deep-learning anomaly signals.'}
           </p>
         </div>
 
-        <div className="flex items-center gap-2 rounded-lg border border-card-border bg-surface/40 p-1">
-          {HORIZON_OPTIONS.map((days) => (
-            <button
-              key={days}
-              onClick={() => setSelectedDays(days)}
-              className={clsx(
-                'rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors',
-                selectedDays === days
-                  ? 'bg-brand-blue text-white shadow-sm'
-                  : 'text-text-secondary hover:bg-surface hover:text-text-primary'
-              )}
-            >
-              {days}D
-            </button>
-          ))}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 rounded-lg border border-card-border bg-surface/40 p-1">
+            {HORIZON_OPTIONS.map((days) => (
+              <button
+                key={days}
+                onClick={() => setSelectedDays(days)}
+                className={clsx(
+                  'rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors',
+                  selectedDays === days
+                    ? 'bg-brand-blue text-white shadow-sm'
+                    : 'text-text-secondary hover:bg-surface hover:text-text-primary'
+                )}
+              >
+                {days}D
+              </button>
+            ))}
+          </div>
+
+          <div className="flex items-center gap-1 rounded-lg border border-card-border bg-surface/40 p-1">
+            {MODE_OPTIONS.map((mode) => (
+              <button
+                key={mode.id}
+                onClick={() => setSelectedMode(mode.id)}
+                className={clsx(
+                  'rounded-md px-2 py-1 text-[11px] font-semibold transition-colors',
+                  selectedMode === mode.id
+                    ? 'bg-brand-blue text-white shadow-sm'
+                    : 'text-text-secondary hover:bg-surface hover:text-text-primary'
+                )}
+              >
+                {mode.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
       <div className="mb-4 grid grid-cols-1 gap-2 text-xs md:grid-cols-3">
         <div className="rounded-md border border-card-border bg-surface/30 px-3 py-2 text-text-secondary">
-          Data Source: <span className="font-semibold text-text-primary">Live backend endpoints</span>
+          Signal mode: <span className="font-semibold text-text-primary">{modeMeta?.label || selectedMode}</span>
         </div>
         <div className="rounded-md border border-card-border bg-surface/30 px-3 py-2 text-text-secondary">
-          Latest observed: <span className="font-mono text-text-primary">{observedPoint ? `${formatDate(observedPoint.date, 'MMM dd, yyyy')} (${formatScore(observedPoint.observedScore)})` : 'Unavailable'}</span>
+          Models used: <span className="font-mono text-text-primary">{modelsUsed.length ? modelsUsed.join(', ') : 'Unavailable'}</span>
         </div>
         <div className="rounded-md border border-card-border bg-surface/30 px-3 py-2 text-text-secondary">
           Forecast generated: <span className="font-mono text-text-primary">{generatedDate ? formatDate(generatedDate, 'MMM dd, yyyy') : 'Unavailable'}</span>
