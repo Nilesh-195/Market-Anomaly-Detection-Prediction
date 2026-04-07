@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { Card } from '../components/ui/Card'
 
 import AnomalyTable from '../components/widgets/AnomalyTable'
+import AnomalyForecastPanel from '../components/widgets/AnomalyForecastPanel'
 import PriceAreaChart from '../components/charts/PriceAreaChart'
 import RiskScoreChart from '../components/charts/RiskScoreChart'
 import EvaluationSnapshot from '../components/widgets/EvaluationSnapshot'
@@ -69,7 +70,7 @@ function Sparkline({ values = [], selected = false }) {
 }
 
 export default function Dashboard({ 
-  current, historical, priceForecast, evaluation, summary,
+  current, historical, forecast, priceForecast, evaluation, summary,
   loading, selectedAsset, onSelectAsset, apiOnline, lastUpdated, onRefresh
 }) {
   const [advancedData, setAdvancedData] = useState(null)
@@ -193,6 +194,25 @@ export default function Dashboard({
     () => (historical?.events ?? []).slice(0, 40).map((event) => ({ date: event.date, start_date: event.start_date, end_date: event.end_date, close: null })),
     [historical]
   )
+
+  const latestObservation = useMemo(() => {
+    if (current?.date != null && Number.isFinite(current?.ensemble_score)) {
+      return {
+        date: current.date,
+        score: current.ensemble_score,
+      }
+    }
+
+    const lastRow = chartData.length ? chartData[chartData.length - 1] : null
+    if (lastRow?.date != null && Number.isFinite(lastRow?.ensemble_score)) {
+      return {
+        date: lastRow.date,
+        score: lastRow.ensemble_score,
+      }
+    }
+
+    return null
+  }, [current, chartData])
 
   const selectedFullName = ASSET_NAMES[selectedAsset] || selectedAsset
 
@@ -333,6 +353,14 @@ export default function Dashboard({
       </motion.div>
 
       <div className="space-y-6">
+          <motion.div variants={itemVariants}>
+            <AnomalyForecastPanel
+              asset={selectedAsset}
+              initialForecast={forecast}
+              latestObservation={latestObservation}
+            />
+          </motion.div>
+
           {/* 4) Update PriceAreaChart */}
           <motion.div variants={itemVariants}>
             <Card>
@@ -377,6 +405,7 @@ export default function Dashboard({
               )}
             </Card>
           </motion.div>
+
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-[1fr_250px] gap-6 pb-12">
