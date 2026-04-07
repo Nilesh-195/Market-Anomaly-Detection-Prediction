@@ -564,6 +564,7 @@ def _load_crash_events_for_asset(
                 "date": str(ev_ts.date()),
                 "event": ev.get("event"),
                 "impact": ev.get("impact"),
+                "description": ev.get("description"),
             }
         )
 

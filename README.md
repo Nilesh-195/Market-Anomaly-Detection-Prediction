@@ -1,6 +1,6 @@
 # Market Anomaly Detection & Prediction
 
-> **Production-grade ML system for stock price forecasting and market anomaly detection across 6 financial assets, powered by a 9-model ensemble with multi-mode anomaly forecasting, regime-adaptive blending, integrated explainability, REST API, and interactive React dashboard.** ⭐
+> **Production-grade ML system for stock price forecasting and market anomaly detection across 6 financial assets, powered by a dynamic 7-9 model ensemble with multi-mode anomaly forecasting, regime-adaptive blending, integrated explainability, REST API, and interactive React dashboard.** ⭐
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.10-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
@@ -95,7 +95,7 @@
 ║  ── ANOMALY DETECTION MODELS (per asset × 6) ───────────────────────────  ║
 ║  Baseline (4): Z-Score · Isolation Forest · LSTM Autoencoder · Prophet    ║
 ║  Advanced (5): XGBoost · HMM · TCN · VAE · Anomaly Transformer            ║
-║  Ensembles:    Baseline Ensemble (4-model) · Advanced Ensemble (9-model)   ║
+║  Ensembles:    Baseline Ensemble (4-model) · Advanced Ensemble (dynamic 7-9 model) ║
 ║                                                                             ║
 ║  ── FORECASTING MODELS ─────────────────────────────────────────────────  ║
 ║  Naive / Drift / Mean  │  SES / Holt / Holt-Winters  │  ARIMA / SARIMA   ║
@@ -121,7 +121,7 @@ Baseline Ensemble Score = (15% × Z-Score)
                         + (40% × LSTM Autoencoder)
                         + (20% × Prophet Residual)
 
-Advanced Ensemble Score  = Dynamic weighted average of all 9 models
+Advanced Ensemble Score  = Dynamic weighted average of available advanced models (7-9)
 
 Final Score Range: 0 – 100  (normalized)
 
@@ -146,7 +146,7 @@ Final Score Range: 0 – 100  (normalized)
 **Multi-Mode Anomaly Forecasting** ⭐ *NEW*
 - 4 distinct signal sources with toggleable UI modes:
   - **Ensemble:** Baseline 4-model average (Z-Score, IForest, LSTM AE, Prophet)
-  - **Advanced:** 9-model weighted combining all baseline + advanced models
+  - **Advanced:** Dynamic 7-9 model weighted combination of baseline + advanced models
   - **DL Composite:** Deep learning weighted blend (0.35×LSTM + 0.30×TCN + 0.20×VAE + 0.15×Anomaly Transformer)
   - **Hybrid:** Regime-adaptive blend of Advanced + DL (crisis: 45/55, bull: 60/40, neutral: 55/45)
 - 3 forecasting methods: ARIMA(2,1,2), ExponentialSmoothing (ETS), Hybrid blend (60% ARIMA + 40% ETS)
@@ -399,15 +399,15 @@ curl "http://localhost:8000/anomaly/forecast/SP500?days=10&mode=hybrid&method=hy
     {
       "date": "2026-04-08",
       "score": 42.3,
-      "lower_95": 38.1,
-      "upper_95": 46.5,
+      "lower": 38.1,
+      "upper": 46.5,
       "risk_label": "Elevated"
     },
     {
       "date": "2026-04-09",
       "score": 38.9,
-      "lower_95": 34.2,
-      "upper_95": 43.6,
+      "lower": 34.2,
+      "upper": 43.6,
       "risk_label": "Normal"
     }
   ]
@@ -430,8 +430,8 @@ curl "http://localhost:8000/anomaly/forecast/BTC?days=10&mode=dl&method=arima"
     {
       "date": "2026-04-08",
       "score": 52.1,
-      "lower_95": 48.3,
-      "upper_95": 55.9,
+      "lower": 48.3,
+      "upper": 55.9,
       "risk_label": "Elevated"
     }
   ]
@@ -448,14 +448,14 @@ curl "http://localhost:8000/anomaly/forecast/NASDAQ?days=10&mode=advanced&method
   "asset": "NASDAQ",
   "forecast_mode": "advanced",
   "forecast_method": "ets",
-  "source_label": "Advanced Ensemble: All 9 models (4 baseline + 5 advanced)",
+  "source_label": "Advanced Ensemble: Dynamic 7-9 models (4 baseline + 3 core advanced + optional VAE/AT)",
   "model_used": ["zscore", "iforest", "lstm", "prophet", "xgb", "hmm", "tcn", "vae", "anomaly_transformer"],
   "forecast_points": [
     {
       "date": "2026-04-08",
       "score": 45.7,
-      "lower_95": 40.2,
-      "upper_95": 51.2,
+      "lower": 40.2,
+      "upper": 51.2,
       "risk_label": "Elevated"
     }
   ]
@@ -631,9 +631,9 @@ ensemble_score = (15% × Z-Score) + (25% × IForest) + (40% × LSTM AE) + (20% �
 **Use case:** Conservative baseline; good for first-pass anomaly detection.
 
 #### 2. **Advanced Mode**
-Uses all 9 anomaly models weighted by a pre-computed ensemble in the data layer:
+Uses all available anomaly models (dynamic 7-9) weighted by a pre-computed ensemble in the data layer:
 ```
-adv_ensemble_score = weighted_average(all 9 models)
+adv_ensemble_score = weighted_average(available models, 7-9 total)
 where models = [zscore, iforest, lstm, prophet, xgb, hmm, tcn, vae, anomaly_transformer]
 ```
 **Use case:** Comprehensive signal incorporating advanced models; recommended for institutional risk monitoring.
@@ -744,4 +744,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Overview
 
-A comprehensive production-ready system demonstrating end-to-end ML engineering: from raw market data ingestion and feature engineering, through 9-model anomaly detection and price forecasting, to a scalable REST API and interactive dashboard with **multi-mode anomaly forecasting** (ensemble, advanced, DL composite, and regime-aware hybrid modes). Features real-time comparison overlays, regime-adaptive blending, and institutional-grade risk monitoring for algorithmic trading and quantitative research.
+A comprehensive production-ready system demonstrating end-to-end ML engineering: from raw market data ingestion and feature engineering, through dynamic 7-9 model anomaly detection and price forecasting, to a scalable REST API and interactive dashboard with **multi-mode anomaly forecasting** (ensemble, advanced, DL composite, and regime-aware hybrid modes). Features real-time comparison overlays, regime-adaptive blending, and institutional-grade risk monitoring for algorithmic trading and quantitative research.

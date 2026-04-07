@@ -2,7 +2,7 @@
 main.py — FastAPI backend for Time Series Forecasting & Anomaly Detection
 ===========================================================================
 PRIMARY: Stock Price Forecasting using classical TSFA methods
-BONUS: Market Anomaly Detection (Phase 2: 9-model advanced ensemble)
+BONUS: Market Anomaly Detection (Phase 2: dynamic 7-9 model advanced ensemble)
 
 FORECASTING ENDPOINTS:
   GET  /forecast/price/{asset}           → Price forecast (best method)
@@ -188,6 +188,25 @@ def _filter_crash_events(events: list[dict], asset: str | None = None, from_date
         filtered = ranged
 
     return sorted(filtered, key=lambda x: x.get("date", ""))
+
+
+def _evaluation_model_key(model_name: str) -> str:
+    mapping = {
+        "Z-Score": "zscore_score",
+        "Isolation Forest": "iforest_score",
+        "LSTM Autoencoder": "lstm_score",
+        "Prophet Residual": "prophet_score",
+        "XGBoost Classifier": "xgb_score",
+        "HMM Regime": "hmm_score",
+        "TCN Autoencoder": "tcn_score",
+        "VAE Autoencoder": "vae_score",
+        "Anomaly Transformer": "at_score",
+        "Baseline Ensemble": "ensemble_score",
+        "Advanced Ensemble": "adv_ensemble",
+    }
+    if model_name in mapping:
+        return mapping[model_name]
+    return str(model_name).strip().lower().replace("-", "_").replace(" ", "_")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1033,17 +1052,71 @@ def get_anomaly_model_comparison(asset: str):
 @app.get("/anomaly/evaluation", tags=["Anomaly Detection"])
 def get_anomaly_evaluation():
     """
-    Full anomaly detection evaluation report.
+    Full anomaly detection evaluation summary.
 
-    Returns Precision/Recall/F1/AUC metrics for all models across
-    all assets, evaluated against 24 labeled crash events.
+    Returns CSV-backed per-asset/per-model metrics evaluated against
+    24 labeled market events.
+
+    Response shape:
+    - assets: list of asset tickers
+    - models: list of model names
+    - rows: tabular metrics from evaluation_summary.csv
     """
-    report_path = ROOT_DIR / "backend" / "models" / "evaluation_report.json"
-    if not report_path.exists():
-        raise HTTPException(status_code=404,
-                            detail="Evaluation report not found. Run evaluate.py first.")
-    with open(report_path) as f:
-        return json.load(f)
+    summary_path = ROOT_DIR / "backend" / "models" / "evaluation_summary.csv"
+    if not summary_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="evaluation_summary.csv not found. Run model evaluation first.",
+        )
+
+    try:
+        df = pd.read_csv(summary_path)
+    except Exception as e:
+        log.error(f"Failed to load evaluation summary CSV: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to read evaluation summary: {e}")
+
+    if df.empty:
+        return {
+            "assets": [],
+            "models": [],
+            "rows": [],
+            "asset_metrics": {},
+            "labeled_events": 24,
+        }
+
+    clean_df = df.where(pd.notna(df), None)
+    rows = clean_df.to_dict(orient="records")
+    assets = sorted({str(a) for a in clean_df["asset"].tolist() if a}) if "asset" in clean_df.columns else []
+    models = list(dict.fromkeys(str(m) for m in clean_df["model"].tolist() if m)) if "model" in clean_df.columns else []
+
+    # Compatibility payload used by existing frontend metric tables.
+    asset_metrics: dict[str, dict] = {}
+    for row in rows:
+        asset = row.get("asset")
+        model_name = row.get("model")
+        if not asset or not model_name:
+            continue
+
+        model_key = _evaluation_model_key(str(model_name))
+        asset_metrics.setdefault(str(asset), {})[model_key] = {
+            "threshold": row.get("threshold"),
+            "f1": row.get("f1"),
+            "precision": row.get("precision"),
+            "recall": row.get("recall"),
+            "roc_auc": row.get("roc_auc"),
+            "hit_rate": row.get("hit_rate"),
+            "crashes_detected": row.get("crashes_detected"),
+            "crashes_in_range": row.get("crashes_in_range"),
+            "avg_lead_days": row.get("avg_lead_days"),
+        }
+
+    return {
+        "assets": assets,
+        "models": models,
+        "rows": rows,
+        "asset_metrics": asset_metrics,
+        "labeled_events": 24,
+    }
 
 
 @app.get("/anomaly/crash-labels", tags=["Anomaly Detection"])

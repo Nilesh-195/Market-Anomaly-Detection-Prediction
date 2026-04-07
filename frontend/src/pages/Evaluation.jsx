@@ -21,6 +21,11 @@ const MODEL_LABELS = {
   adv_ensemble: 'Advanced Ensemble',
 }
 
+const MODEL_NAME_TO_KEY = Object.entries(MODEL_LABELS).reduce((acc, [key, label]) => {
+  acc[label] = key
+  return acc
+}, {})
+
 const PREFERRED_MODEL_ORDER = [
   'adv_ensemble',
   'ensemble_score',
@@ -54,7 +59,42 @@ function toFixedText(value, digits = 3) {
 
 function normalizeEvaluationPayload(payload) {
   if (!payload || typeof payload !== 'object') return {}
-  return payload.assets && typeof payload.assets === 'object' ? payload.assets : payload
+
+  if (payload.asset_metrics && typeof payload.asset_metrics === 'object') {
+    return payload.asset_metrics
+  }
+
+  if (Array.isArray(payload.rows)) {
+    const metrics = {}
+    payload.rows.forEach((row) => {
+      const asset = row?.asset
+      const modelName = row?.model
+      if (!asset || !modelName) return
+
+      const modelKey = MODEL_NAME_TO_KEY[modelName]
+        || String(modelName).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '')
+
+      if (!metrics[asset]) metrics[asset] = {}
+      metrics[asset][modelKey] = {
+        threshold: toNumber(row?.threshold),
+        f1: toNumber(row?.f1),
+        precision: toNumber(row?.precision),
+        recall: toNumber(row?.recall),
+        roc_auc: toNumber(row?.roc_auc),
+        hit_rate: toNumber(row?.hit_rate),
+        crashes_detected: toNumber(row?.crashes_detected, 0),
+        crashes_in_range: toNumber(row?.crashes_in_range, 0),
+        avg_lead_days: toNumber(row?.avg_lead_days),
+      }
+    })
+    return metrics
+  }
+
+  if (payload.assets && typeof payload.assets === 'object' && !Array.isArray(payload.assets)) {
+    return payload.assets
+  }
+
+  return payload
 }
 
 function getAccuracyValue(data) {

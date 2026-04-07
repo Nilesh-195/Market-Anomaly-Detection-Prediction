@@ -77,8 +77,12 @@ export default function TrainTestChart({ selectedAsset, loading: pageLoading }) 
 
         // Extract test period data from evaluation payload
         let testData = []
-        if (evalResponse?.assets?.[selectedAsset]) {
-          const assetEval = evalResponse.assets[selectedAsset]
+        const assetEval = evalResponse?.asset_metrics?.[selectedAsset]
+          || (evalResponse?.assets && !Array.isArray(evalResponse.assets)
+            ? evalResponse.assets[selectedAsset]
+            : null)
+
+        if (assetEval) {
           
           // Check if evaluation has test_data with dates and values
           if (assetEval.test_data && Array.isArray(assetEval.test_data)) {
