@@ -2,7 +2,7 @@
 main.py — FastAPI backend for Time Series Forecasting & Anomaly Detection
 ===========================================================================
 PRIMARY: Stock Price Forecasting using classical TSFA methods
-BONUS: Market Anomaly Detection (Phase 2: 7 models with advanced ensemble)
+BONUS: Market Anomaly Detection (Phase 2: dynamic 7-9 models with advanced ensemble)
 
 FORECASTING ENDPOINTS:
   GET  /forecast/price/{asset}           → Price forecast (best method)
@@ -21,8 +21,8 @@ ANOMALY DETECTION ENDPOINTS:
     GET  /anomaly/forecast/{asset}       → Anomaly score forecast
     GET  /anomaly/historical/{asset}     → Historical anomaly events
     GET  /anomaly/comparison/{asset}     → Per-model anomaly stats
-  Advanced (Phase 2 - 7 models):
-    GET  /anomaly/advanced/{asset}       → All 7 models + advanced ensemble
+    Advanced (Phase 2 - 7-9 models):
+        GET  /anomaly/advanced/{asset}       → Dynamic 7-9 models + advanced ensemble
     GET  /anomaly/regime/{asset}         → HMM market regime timeline
     GET  /anomaly/compare-tiers/{asset}  → Baseline vs Advanced comparison
 
@@ -59,6 +59,13 @@ from forecast_evaluation import evaluate_all_methods
 from features import load_all_features
 from dl_models import lstm_seq2seq_forecast, transformer_forecast
 from gb_models import xgboost_forecast  # Phase 3 DL
+from anomaly_quality import (
+    load_crash_labels,
+    anomaly_metrics,
+    threshold_analysis as anomaly_threshold_analysis,
+    false_positive_timeline,
+    bubble_risk_snapshot,
+)
 
 # Import anomaly detection (LEGACY - SECONDARY)
 from predict import (
@@ -84,9 +91,10 @@ app = FastAPI(
         "- Cross-validation and method comparison\n"
         "- Prediction intervals with 95% confidence bands\n\n"
         "**BONUS FEATURES (Phase 2 Upgraded):**\n"
-        "- Market anomaly detection with 7 models:\n"
+        "- Market anomaly detection with dynamic 7-9 models:\n"
         "  * Baseline: Z-Score, Isolation Forest, LSTM, Prophet\n"
         "  * Advanced: XGBoost (supervised), HMM (regime), TCN (temporal)\n"
+        "  * Optional (if available): VAE, Anomaly Transformer\n"
         "- Market regime detection (bull/bear/crisis)\n"
         "- Historical crash event analysis (24 labeled events)\n"
         "- Advanced ensemble with macro features"
@@ -140,38 +148,7 @@ def health():
     return {
         "status": "ok",
         "message": "Time Series Forecasting & Anomaly Detection API",
-        "version": "2.0.0",
-        "primary_features": [
-            "Stock price forecasting (Naive, Exp. Smoothing, ARIMA, VAR)",
-            "Stationarity testing (ADF/KPSS)",
-            "ACF/PACF analysis",
-            "Method comparison & evaluation",
-            "Prediction intervals",
-        ],
-        "bonus_features": [
-            "Anomaly detection",
-            "Historical crash events",
-        ],
-        "supported_assets": ASSETS,
-        "endpoints": {
-            "forecasting": "/docs#/Forecasting",
-            "anomaly_detection": "/docs#/Anomaly%20Detection",
-            "general": "/docs#/General",
-        },
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# GENERAL ENDPOINTS
-# ══════════════════════════════════════════════════════════════════════════════
-
-@app.get("/")
-def health():
-    """API health check and information."""
-    return {
-        "status": "ok",
-        "message": "Time Series Forecasting & Anomaly Detection API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "primary_features": [
             "Stock price forecasting (Naive, Exp. Smoothing, ARIMA, VAR)",
             "Stationarity testing (ADF/KPSS)",
@@ -264,6 +241,70 @@ def get_summary():
         "assets": results,
         "count": len(results),
         "timestamp": str(pd.Timestamp.now()),
+    }
+
+
+@app.get("/events/crashes", tags=["General"])
+def get_crash_events(asset: str = None, from_date: str = None, to_date: str = None):
+    """
+    Return labeled major crash events from crash_labels.json.
+
+    Optional filters:
+    - asset: keep only events that affected this asset
+    - from_date / to_date: ISO date bounds (YYYY-MM-DD)
+    """
+    labels_path = ROOT_DIR / "backend" / "data" / "crash_labels.json"
+    if not labels_path.exists():
+        raise HTTPException(status_code=404, detail="crash_labels.json not found")
+
+    try:
+        with open(labels_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        log.error(f"events/crashes read error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+    events = payload.get("events", [])
+
+    if asset:
+        asset_upper = asset.upper()
+        if asset_upper not in ASSETS:
+            raise HTTPException(status_code=404, detail=f"Asset '{asset}' not found. Valid assets: {ASSETS}")
+        events = [e for e in events if asset_upper in e.get("assets_affected", [])]
+
+    start_ts = None
+    end_ts = None
+
+    if from_date:
+        try:
+            start_ts = pd.Timestamp(from_date)
+        except Exception:
+            raise HTTPException(status_code=400, detail="from_date must be ISO format YYYY-MM-DD")
+
+    if to_date:
+        try:
+            end_ts = pd.Timestamp(to_date)
+        except Exception:
+            raise HTTPException(status_code=400, detail="to_date must be ISO format YYYY-MM-DD")
+
+    if start_ts is not None or end_ts is not None:
+        filtered = []
+        for event in events:
+            try:
+                event_ts = pd.Timestamp(event.get("date"))
+            except Exception:
+                continue
+            if start_ts is not None and event_ts < start_ts:
+                continue
+            if end_ts is not None and event_ts > end_ts:
+                continue
+            filtered.append(event)
+        events = filtered
+
+    events = sorted(events, key=lambda x: x.get("date", ""))
+    return {
+        "total_events": len(events),
+        "events": events,
     }
 
 
@@ -973,6 +1014,112 @@ def get_anomaly_evaluation():
         return json.load(f)
 
 
+@app.get("/anomaly/crash-labels", tags=["Anomaly Detection"])
+def get_crash_labels():
+    """Return labeled crash events used for objective validation overlays."""
+    try:
+        return load_crash_labels()
+    except Exception as e:
+        log.error(f"crash-labels error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomaly/metrics/{asset}", tags=["Anomaly Detection"])
+def get_anomaly_metrics(
+    asset: str,
+    model: str = "ensemble_score",
+    threshold: float = 60.0,
+    window_days: int = 7,
+):
+    """Return AUCPR/Brier/calibration/lead-time metrics for anomaly scoring."""
+    a = _check_asset(asset)
+    if not 0 <= threshold <= 100:
+        raise HTTPException(status_code=400, detail="threshold must be between 0 and 100")
+    if not 1 <= window_days <= 30:
+        raise HTTPException(status_code=400, detail="window_days must be between 1 and 30")
+
+    try:
+        return anomaly_metrics(a, model=model, threshold=threshold, window_days=window_days)
+    except Exception as e:
+        log.error(f"metrics error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomaly/threshold-analysis/{asset}", tags=["Anomaly Detection"])
+def get_threshold_analysis(
+    asset: str,
+    model: str = "ensemble_score",
+    min_threshold: float = 40.0,
+    max_threshold: float = 80.0,
+    step: float = 2.0,
+    cost_fp: float = 1.0,
+    cost_fn: float = 5.0,
+    window_days: int = 7,
+):
+    """Sweep thresholds and return precision/recall/F1 plus utility-optimal threshold."""
+    a = _check_asset(asset)
+    if not 0 <= min_threshold < max_threshold <= 100:
+        raise HTTPException(status_code=400, detail="threshold range must satisfy 0 <= min < max <= 100")
+    if step <= 0:
+        raise HTTPException(status_code=400, detail="step must be > 0")
+    if cost_fp < 0 or cost_fn < 0:
+        raise HTTPException(status_code=400, detail="cost_fp and cost_fn must be >= 0")
+
+    try:
+        return anomaly_threshold_analysis(
+            a,
+            model=model,
+            min_threshold=min_threshold,
+            max_threshold=max_threshold,
+            step=step,
+            cost_fp=cost_fp,
+            cost_fn=cost_fn,
+            window_days=window_days,
+        )
+    except Exception as e:
+        log.error(f"threshold-analysis error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomaly/false-positives/{asset}", tags=["Anomaly Detection"])
+def get_false_positives(
+    asset: str,
+    model: str = "ensemble_score",
+    threshold: float = 60.0,
+    top_n: int = 40,
+    window_days: int = 7,
+):
+    """Return high-score dates not matched to labeled crash windows."""
+    a = _check_asset(asset)
+    if not 0 <= threshold <= 100:
+        raise HTTPException(status_code=400, detail="threshold must be between 0 and 100")
+    if not 1 <= top_n <= 500:
+        raise HTTPException(status_code=400, detail="top_n must be between 1 and 500")
+
+    try:
+        return false_positive_timeline(
+            a,
+            model=model,
+            threshold=threshold,
+            top_n=top_n,
+            window_days=window_days,
+        )
+    except Exception as e:
+        log.error(f"false-positives error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/anomaly/bubble-risk/{asset}", tags=["Anomaly Detection"])
+def get_bubble_risk(asset: str):
+    """Return a bubble-risk snapshot derived from engineered valuation and stress signals."""
+    a = _check_asset(asset)
+    try:
+        return bubble_risk_snapshot(a)
+    except Exception as e:
+        log.error(f"bubble-risk error for {a}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # PHASE 2: ADVANCED MODEL ENDPOINTS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -980,15 +1127,16 @@ def get_anomaly_evaluation():
 @app.get("/anomaly/advanced/{asset}", tags=["Anomaly Detection - Advanced"])
 def get_advanced_anomaly(asset: str):
     """
-    Advanced anomaly analysis with all 7 models.
+    Advanced anomaly analysis with 7-9 models.
 
     Returns:
-    - All 7 model scores (4 baseline + 3 advanced)
+    - 7-9 model scores (4 baseline + 3 advanced + optional VAE/AT)
     - Baseline ensemble vs Advanced ensemble
     - Current market regime (bull/bear/crisis)
     - Risk assessment using advanced models
 
     Phase 2 addition: XGBoost (supervised), HMM (regime), TCN (deep temporal)
+    Optional scores are included when present in score parquet columns.
     """
     a = _check_asset(asset)
     try:
@@ -1022,7 +1170,7 @@ def get_regime_timeline(asset: str):
 @app.get("/anomaly/compare-tiers/{asset}", tags=["Anomaly Detection - Advanced"])
 def compare_model_tiers(asset: str):
     """
-    Compare baseline (4 models) vs advanced (7 models) ensemble.
+    Compare baseline (4 models) vs advanced (7-9 models) ensemble.
 
     Returns side-by-side comparison:
     - Current baseline ensemble score

@@ -26,6 +26,8 @@ const MODEL_CONFIG = {
     { id: 'xgb', name: 'XGBoost', desc: 'Supervised crash predictor' },
     { id: 'hmm', name: 'HMM Regime', desc: 'Market-state classifier' },
     { id: 'tcn', name: 'TCN', desc: 'Temporal convolutional sequence model' },
+    { id: 'vae', name: 'VAE', desc: 'Variational Autoencoder' },
+    { id: 'at', name: 'Anomaly Transformer', desc: 'Attention-based anomaly model' },
   ],
 }
 
@@ -121,6 +123,10 @@ export default function AdvancedAnomaly({ selectedAsset, loading: parentLoading 
 
   const modelScores = advancedData?.model_scores ?? {}
   const scoreValues = Object.values(modelScores).filter((v) => Number.isFinite(v))
+  const modelCount = Number(advancedData?.model_count) || scoreValues.length
+  const availableModelDefs = [...MODEL_CONFIG.baseline, ...MODEL_CONFIG.advanced].filter(
+    (model) => Number.isFinite(Number(modelScores?.[model.id]))
+  )
   const agreementCount = scoreValues.filter((value) => value >= 60).length
 
   const chartData = useMemo(() => {
@@ -141,7 +147,7 @@ export default function AdvancedAnomaly({ selectedAsset, loading: parentLoading 
       <div className="space-y-6">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Advanced Anomaly Detection</h1>
-          <p className="text-sm text-text-secondary">7-model ensemble with structural break monitoring.</p>
+          <p className="text-sm text-text-secondary">Adaptive ensemble with structural break monitoring.</p>
         </div>
         <Card>
           <div className="py-8 text-center text-text-secondary">
@@ -158,7 +164,9 @@ export default function AdvancedAnomaly({ selectedAsset, loading: parentLoading 
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-text-primary">Advanced Anomaly Detection</h1>
-          <p className="text-sm text-text-secondary">Ensemble structural stress detection for {selectedAsset}.</p>
+          <p className="text-sm text-text-secondary">
+            {modelCount}-model ensemble (baseline + advanced) structural stress detection for {selectedAsset}.
+          </p>
         </div>
         <div className={clsx('rounded-lg border px-4 py-2 text-sm font-semibold uppercase', getRiskStyles(advScore))}>
           {regimeText} regime
@@ -174,7 +182,7 @@ export default function AdvancedAnomaly({ selectedAsset, loading: parentLoading 
         <Card className="border-brand-blue/20 bg-gradient-to-br from-white to-sky-50">
           <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Advanced Ensemble</p>
           <p className="font-mono text-3xl font-bold text-brand-blue">{advScore.toFixed(1)}</p>
-          <p className="mt-2 text-xs text-text-secondary">7-model signal</p>
+          <p className="mt-2 text-xs text-text-secondary">{modelCount}-model signal</p>
         </Card>
         <Card>
           <p className="text-xs uppercase tracking-[0.14em] text-text-muted">Delta</p>
@@ -209,14 +217,17 @@ export default function AdvancedAnomaly({ selectedAsset, loading: parentLoading 
 
         <Card>
           <h2 className="mb-2 text-lg font-semibold text-text-primary">Model Agreement Gauge</h2>
-          <p className="mb-3 text-sm text-text-secondary">Consensus strength across all 7 models.</p>
-          <AgreementGauge agreement={agreementCount} total={7} />
+          <p className="mb-3 text-sm text-text-secondary">Consensus strength across all available models.</p>
+          <AgreementGauge agreement={agreementCount} total={modelCount || 1} />
+          {modelCount < 9 && (
+            <p className="mt-3 text-center text-xs text-text-muted">{modelCount} models available for this asset (optional models hidden when missing).</p>
+          )}
         </Card>
       </div>
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {[...MODEL_CONFIG.baseline, ...MODEL_CONFIG.advanced].map((model) => {
-          const value = modelScores?.[model.id] ?? 0
+        {availableModelDefs.map((model) => {
+          const value = Number(modelScores?.[model.id])
           return (
             <Card key={model.id} className="border-card-border/90">
               <p className="text-sm font-semibold text-text-primary">{model.name}</p>

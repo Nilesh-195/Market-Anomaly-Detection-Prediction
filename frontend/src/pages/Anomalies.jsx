@@ -9,7 +9,12 @@ import {
   fetchCurrentAnalysis,
   fetchAdvancedAnomaly,
   fetchHistoricalAnomalies,
-  fetchRegimeTimeline
+  fetchRegimeTimeline,
+  fetchCrashLabels,
+  fetchAnomalyMetrics,
+  fetchThresholdAnalysis,
+  fetchFalsePositives,
+  fetchBubbleRisk,
 } from '../services/api'
 import { getRiskColor, getRiskLabel, getRiskTailwind } from '../utils/riskHelpers'
 import { formatPrice, formatPct, formatScore, formatDate } from '../utils/formatters'
@@ -42,6 +47,11 @@ export default function Anomalies({ selectedAsset, loading: globalLoading }) {
     advanced: null,
     historical: null,
     regime: null,
+    crashLabels: null,
+    metrics: null,
+    thresholdAnalysis: null,
+    falsePositives: null,
+    bubbleRisk: null,
   })
   const [localLoading, setLocalLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -68,11 +78,24 @@ export default function Anomalies({ selectedAsset, loading: globalLoading }) {
       setLocalLoading(true)
       setError(null)
       try {
-        const [curr, adv, hist, reg] = await Promise.allSettled([
+        const [curr, adv, hist, reg, labels, metrics, thresholdRec, falsePositives, bubbleRisk] = await Promise.allSettled([
           fetchCurrentAnalysis(selectedAsset),
           fetchAdvancedAnomaly(selectedAsset),
           fetchHistoricalAnomalies(selectedAsset, 100, debouncedThreshold),
           fetchRegimeTimeline(selectedAsset),
+          fetchCrashLabels(),
+          fetchAnomalyMetrics(selectedAsset, debouncedThreshold, 'ensemble_score', 7),
+          fetchThresholdAnalysis(selectedAsset, {
+            model: 'ensemble_score',
+            minThreshold: 40,
+            maxThreshold: 80,
+            step: 2,
+            costFp: 1,
+            costFn: 5,
+            windowDays: 7,
+          }),
+          fetchFalsePositives(selectedAsset, debouncedThreshold, 80, 'ensemble_score', 7),
+          fetchBubbleRisk(selectedAsset),
         ])
 
         setData({
@@ -80,6 +103,11 @@ export default function Anomalies({ selectedAsset, loading: globalLoading }) {
           advanced: adv.status === 'fulfilled' ? adv.value : null,
           historical: hist.status === 'fulfilled' ? hist.value : null,
           regime: reg.status === 'fulfilled' ? reg.value : null,
+          crashLabels: labels.status === 'fulfilled' ? labels.value : null,
+          metrics: metrics.status === 'fulfilled' ? metrics.value : null,
+          thresholdAnalysis: thresholdRec.status === 'fulfilled' ? thresholdRec.value : null,
+          falsePositives: falsePositives.status === 'fulfilled' ? falsePositives.value : null,
+          bubbleRisk: bubbleRisk.status === 'fulfilled' ? bubbleRisk.value : null,
         })
       } catch (err) {
         setError('Failed to fetch anomaly data.')
@@ -140,6 +168,65 @@ export default function Anomalies({ selectedAsset, loading: globalLoading }) {
   }, [filteredChartData, debouncedThreshold])
 
   const events = data.historical?.events ?? []
+  const crashEvents = data.crashLabels?.events ?? []
+  const falsePositiveEvents = data.falsePositives?.events ?? []
+
+  const crashMarkers = useMemo(() => {
+    if (!filteredChartData.length || !crashEvents.length) return []
+
+    const chartDates = filteredChartData.map((row) => row.date)
+    const firstTs = new Date(chartDates[0]).getTime()
+    const lastTs = new Date(chartDates[chartDates.length - 1]).getTime()
+    const maxDistanceMs = 3 * 24 * 60 * 60 * 1000
+    const seen = new Set()
+
+    return crashEvents
+      .filter((event) => (event.assets_affected ?? []).includes(selectedAsset))
+      .map((event) => {
+        const eventTs = new Date(event.date).getTime()
+        if (!Number.isFinite(eventTs)) return null
+        if (eventTs < (firstTs - maxDistanceMs) || eventTs > (lastTs + maxDistanceMs)) return null
+
+        let mappedDate = null
+        let bestDistance = Number.POSITIVE_INFINITY
+
+        chartDates.forEach((date) => {
+          const ts = new Date(date).getTime()
+          const distance = Math.abs(ts - eventTs)
+          if (distance < bestDistance) {
+            bestDistance = distance
+            mappedDate = date
+          }
+        })
+
+        if (!mappedDate || bestDistance > maxDistanceMs) return null
+        if (seen.has(mappedDate)) return null
+        seen.add(mappedDate)
+
+        return {
+          ...event,
+          mappedDate,
+        }
+      })
+      .filter(Boolean)
+  }, [filteredChartData, crashEvents, selectedAsset])
+
+  const falsePositiveMarkers = useMemo(() => {
+    if (!filteredChartData.length || !falsePositiveEvents.length) return []
+    const dateSet = new Set(filteredChartData.map((row) => row.date))
+    return falsePositiveEvents.filter((event) => dateSet.has(event.date)).slice(0, 20)
+  }, [filteredChartData, falsePositiveEvents])
+
+  const bestThreshold = data.thresholdAnalysis?.best?.threshold
+  const thresholdPrecision = data.thresholdAnalysis?.best?.precision
+  const thresholdRecall = data.thresholdAnalysis?.best?.recall
+  const thresholdF1 = data.thresholdAnalysis?.best?.f1
+  const leadDistribution = data.metrics?.lead_time?.distribution ?? {}
+  const bubbleRisk = data.bubbleRisk?.bubble_risk
+  const bubbleLabel = data.bubbleRisk?.risk_label
+  const bubbleWatch = data.bubbleRisk?.is_bubble_watch
+  const aucPr = data.metrics?.auc_pr
+  const brier = data.metrics?.brier_score
 
   // Dual Chart Custom Tooltip
   const DualChartTooltip = ({ active, payload, label }) => {
@@ -366,6 +453,26 @@ export default function Anomalies({ selectedAsset, loading: globalLoading }) {
                    />
                 ))}
 
+                {crashMarkers.map((event) => (
+                  <ReferenceLine
+                    key={`crash-${event.mappedDate}`}
+                    x={event.mappedDate}
+                    stroke="#B91C1C"
+                    strokeDasharray="2 3"
+                    strokeWidth={event.impact === 'extreme' ? 2 : 1}
+                  />
+                ))}
+
+                {falsePositiveMarkers.map((event) => (
+                  <ReferenceLine
+                    key={`fp-${event.date}`}
+                    x={event.date}
+                    stroke="#D97706"
+                    strokeDasharray="1 4"
+                    strokeWidth={1}
+                  />
+                ))}
+
                 <RechartsTooltip content={<DualChartTooltip />} cursor={{ fill: '#F5F6F8' }} />
                 
                 {/* Dynamic threshold marker line on Right Axis */}
@@ -398,7 +505,75 @@ export default function Anomalies({ selectedAsset, loading: globalLoading }) {
               </ComposedChart>
             </ResponsiveContainer>
           </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-4 text-[11px] text-text-secondary">
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-px w-5 bg-[#B91C1C]" /> Crash label marker
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <span className="h-px w-5 border-t border-dashed border-[#D97706]" /> False positive marker
+            </span>
+            <span>Crash markers shown: {crashMarkers.length}</span>
+            <span>False positives shown: {falsePositiveMarkers.length}</span>
+          </div>
         </Card>
+      </motion.div>
+
+      <motion.div variants={itemVariants}>
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+          <Card className="p-5">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-text-primary">Bubble Risk Monitor</h3>
+            <div className="mt-3 flex items-end justify-between gap-2">
+              <div className="text-3xl font-mono font-bold" style={{ color: getRiskColor(bubbleRisk ?? 0) }}>
+                {bubbleRisk != null ? formatScore(bubbleRisk) : '--'}
+              </div>
+              {bubbleLabel && <Badge variant={bubbleWatch ? 'orange' : 'green'}>{bubbleLabel}</Badge>}
+            </div>
+            <div className="mt-3 text-xs text-text-secondary">
+              Bubble score: <span className="font-mono text-text-primary">{data.bubbleRisk?.bubble_score ?? '--'}</span>
+            </div>
+            <div className="mt-1 text-xs text-text-secondary">
+              Percentile: <span className="font-mono text-text-primary">{data.bubbleRisk?.bubble_percentile != null ? `${(data.bubbleRisk.bubble_percentile * 100).toFixed(1)}%` : '--'}</span>
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-text-primary">Threshold Quality</h3>
+            <div className="mt-3 text-xs text-text-secondary">
+              Recommended threshold: <span className="font-mono text-text-primary">{bestThreshold ?? '--'}</span>
+            </div>
+            <div className="mt-1 text-xs text-text-secondary">
+              Precision: <span className="font-mono text-text-primary">{thresholdPrecision != null ? formatPct(thresholdPrecision * 100) : '--'}</span>
+            </div>
+            <div className="mt-1 text-xs text-text-secondary">
+              Recall: <span className="font-mono text-text-primary">{thresholdRecall != null ? formatPct(thresholdRecall * 100) : '--'}</span>
+            </div>
+            <div className="mt-1 text-xs text-text-secondary">
+              F1: <span className="font-mono text-text-primary">{thresholdF1 != null ? thresholdF1.toFixed(3) : '--'}</span>
+            </div>
+            <div className="mt-3 border-t border-card-border pt-3 text-xs text-text-secondary">
+              AUCPR: <span className="font-mono text-text-primary">{aucPr != null ? aucPr.toFixed(3) : '--'}</span>
+              {' '}| Brier: <span className="font-mono text-text-primary">{brier != null ? brier.toFixed(4) : '--'}</span>
+            </div>
+          </Card>
+
+          <Card className="p-5">
+            <h3 className="text-sm font-bold uppercase tracking-[0.12em] text-text-primary">Lead Time and False Positives</h3>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-text-secondary">
+              <div>1-3d early: <span className="font-mono text-text-primary">{leadDistribution.early_1_3 ?? 0}</span></div>
+              <div>4-7d early: <span className="font-mono text-text-primary">{leadDistribution.early_4_7 ?? 0}</span></div>
+              <div>{'>'}7d early: <span className="font-mono text-text-primary">{leadDistribution.early_gt_7 ?? 0}</span></div>
+              <div>Missed: <span className="font-mono text-text-primary">{leadDistribution.missed ?? 0}</span></div>
+            </div>
+            <div className="mt-3 border-t border-card-border pt-3 text-xs text-text-secondary">
+              False positives (threshold {debouncedThreshold}):
+              <span className="ml-2 font-mono text-text-primary">{data.falsePositives?.count ?? 0}</span>
+            </div>
+            <div className="mt-2 text-xs text-text-muted">
+              Recent dates: {falsePositiveEvents.slice(0, 3).map((e) => e.date).join(', ') || 'None'}
+            </div>
+          </Card>
+        </div>
       </motion.div>
 
       {/* SECTION 3 - EVENTS */}

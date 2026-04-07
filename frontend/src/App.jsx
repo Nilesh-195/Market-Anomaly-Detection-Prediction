@@ -104,6 +104,8 @@ export default function App() {
             element={
               <Forecast
                 priceForecast={priceForecast}
+                anomalyForecast={forecast}
+                currentAnalysis={current}
                 selectedAsset={selectedAsset}
                 loading={loading}
                 error={error}

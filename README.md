@@ -303,6 +303,8 @@ cd frontend && npm install && npm run dev
 
 ### Forecasting Endpoints
 
+#### Price Forecasting
+
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/forecast/price/{asset}?horizon=30&method=auto` | **Recommended** — best-performing method with 95% CI |
@@ -315,7 +317,13 @@ cd frontend && npm install && npm run dev
 | `GET` | `/forecast/acf-pacf/{asset}?max_lags=40` | ACF/PACF plots with ARIMA order recommendation |
 | `GET` | `/forecast/evaluate/{asset}` | Cross-validation metrics (RMSE, MAE, MAPE) |
 
-### Anomaly Detection Endpoints
+#### Anomaly Forecasting
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/anomaly/forecast/{asset}?days=10` | 5–30 day anomaly score forecast with CI |
+
+### Anomaly Detection Endpoints (Real-time)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -323,7 +331,6 @@ cd frontend && npm install && npm run dev
 | `GET` | `/anomaly/advanced/{asset}` | All 9 models + both ensemble scores |
 | `GET` | `/anomaly/regime/{asset}` | HMM market regime timeline (bull/bear/crisis) |
 | `GET` | `/anomaly/historical/{asset}` | Historical anomaly events (clustered) |
-| `GET` | `/anomaly/forecast/{asset}?days=10` | 5–30 day anomaly score forecast with CI |
 | `GET` | `/anomaly/comparison/{asset}` | Per-model statistics and correlation matrix |
 | `GET` | `/anomaly/compare-tiers/{asset}` | Baseline vs advanced ensemble comparison |
 

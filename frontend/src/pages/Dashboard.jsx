@@ -74,6 +74,14 @@ export default function Dashboard({
   loading, selectedAsset, onSelectAsset, apiOnline, lastUpdated, onRefresh
 }) {
   const [advancedData, setAdvancedData] = useState(null)
+  const [insights, setInsights] = useState({
+    bubbleRisk: null,
+    metrics: null,
+    thresholdAnalysis: null,
+    falsePositives: null,
+    crashLabels: null,
+  })
+  const [insightsLoading, setInsightsLoading] = useState(true)
   const [overviewCards, setOverviewCards] = useState([])
   const [overviewLoading, setOverviewLoading] = useState(true)
   const [showWindows, setShowWindows] = useState(true)
@@ -97,6 +105,38 @@ export default function Dashboard({
       .then((res) => res.json())
       .then(setAdvancedData)
       .catch(() => setAdvancedData(null))
+  }, [selectedAsset])
+
+  useEffect(() => {
+    if (!selectedAsset) return
+
+    let active = true
+    setInsightsLoading(true)
+
+    Promise.allSettled([
+      fetch(`${API_BASE}/anomaly/bubble-risk/${selectedAsset}`).then((r) => r.json()),
+      fetch(`${API_BASE}/anomaly/metrics/${selectedAsset}?threshold=60&model=ensemble_score&window_days=7`).then((r) => r.json()),
+      fetch(`${API_BASE}/anomaly/threshold-analysis/${selectedAsset}?model=ensemble_score&min_threshold=40&max_threshold=80&step=2&cost_fp=1&cost_fn=5&window_days=7`).then((r) => r.json()),
+      fetch(`${API_BASE}/anomaly/false-positives/${selectedAsset}?threshold=60&top_n=100&model=ensemble_score&window_days=7`).then((r) => r.json()),
+      fetch(`${API_BASE}/anomaly/crash-labels`).then((r) => r.json()),
+    ])
+      .then(([bubbleRisk, metrics, thresholdAnalysis, falsePositives, crashLabels]) => {
+        if (!active) return
+        setInsights({
+          bubbleRisk: bubbleRisk.status === 'fulfilled' ? bubbleRisk.value : null,
+          metrics: metrics.status === 'fulfilled' ? metrics.value : null,
+          thresholdAnalysis: thresholdAnalysis.status === 'fulfilled' ? thresholdAnalysis.value : null,
+          falsePositives: falsePositives.status === 'fulfilled' ? falsePositives.value : null,
+          crashLabels: crashLabels.status === 'fulfilled' ? crashLabels.value : null,
+        })
+      })
+      .finally(() => {
+        if (active) setInsightsLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
   }, [selectedAsset])
 
   useEffect(() => {
@@ -215,6 +255,17 @@ export default function Dashboard({
   }, [current, chartData])
 
   const selectedFullName = ASSET_NAMES[selectedAsset] || selectedAsset
+  const crashCountForAsset = useMemo(
+    () => (insights.crashLabels?.events ?? []).filter((e) => (e.assets_affected ?? []).includes(selectedAsset)).length,
+    [insights.crashLabels, selectedAsset]
+  )
+  const bubbleRiskScore = insights.bubbleRisk?.bubble_risk
+  const bubbleRiskLabel = insights.bubbleRisk?.risk_label
+  const bestThreshold = insights.thresholdAnalysis?.best?.threshold
+  const thresholdPrecision = insights.thresholdAnalysis?.best?.precision
+  const aucPr = insights.metrics?.auc_pr
+  const brier = insights.metrics?.brier_score
+  const falsePositiveCount = insights.falsePositives?.count
 
   return (
     <motion.div 
@@ -350,6 +401,52 @@ export default function Dashboard({
             </span>
           </div>
         ))}
+      </motion.div>
+
+      <motion.div variants={itemVariants}>
+        <Card className="border-brand-blue/20 bg-gradient-to-r from-blue-50/40 to-cyan-50/40">
+          <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+            <h2 className="text-base font-bold text-text-primary">NEW: Anomaly Intelligence Signals</h2>
+            <span className="text-xs text-text-secondary">Full timeline markers are on the Anomalies page</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="rounded-lg border border-card-border bg-card-bg p-3">
+              <div className="text-[11px] uppercase tracking-wider text-text-muted">Bubble Risk</div>
+              <div className="mt-1 font-mono text-xl font-bold" style={{ color: getRiskColor(bubbleRiskScore ?? 0) }}>
+                {insightsLoading ? '--' : (bubbleRiskScore != null ? formatScore(bubbleRiskScore) : '--')}
+              </div>
+              <div className="mt-1 text-xs text-text-secondary">{insightsLoading ? 'Loading...' : (bubbleRiskLabel || 'Unavailable')}</div>
+            </div>
+
+            <div className="rounded-lg border border-card-border bg-card-bg p-3">
+              <div className="text-[11px] uppercase tracking-wider text-text-muted">Recommended Threshold</div>
+              <div className="mt-1 font-mono text-xl font-bold text-text-primary">
+                {insightsLoading ? '--' : (bestThreshold ?? '--')}
+              </div>
+              <div className="mt-1 text-xs text-text-secondary">
+                Precision: {insightsLoading ? '--' : (thresholdPrecision != null ? `${(thresholdPrecision * 100).toFixed(1)}%` : '--')}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-card-border bg-card-bg p-3">
+              <div className="text-[11px] uppercase tracking-wider text-text-muted">Signal Reliability</div>
+              <div className="mt-1 font-mono text-sm font-semibold text-text-primary">
+                AUCPR: {insightsLoading ? '--' : (aucPr != null ? aucPr.toFixed(3) : '--')}
+              </div>
+              <div className="mt-1 font-mono text-sm font-semibold text-text-primary">
+                Brier: {insightsLoading ? '--' : (brier != null ? brier.toFixed(4) : '--')}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-card-border bg-card-bg p-3">
+              <div className="text-[11px] uppercase tracking-wider text-text-muted">False Positives / Labels</div>
+              <div className="mt-1 font-mono text-xl font-bold text-text-primary">
+                {insightsLoading ? '--' : (falsePositiveCount ?? 0)} / {insightsLoading ? '--' : crashCountForAsset}
+              </div>
+              <div className="mt-1 text-xs text-text-secondary">Current threshold 60 over ±7 day window</div>
+            </div>
+          </div>
+        </Card>
       </motion.div>
 
       <div className="space-y-6">

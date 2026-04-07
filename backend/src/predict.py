@@ -4,7 +4,7 @@ predict.py
 Generates predictions for a given asset:
 
   1. Current anomaly analysis  — latest ensemble score + per-model breakdown
-  2. Advanced anomaly analysis — advanced ensemble + regime + all 7 models (Phase 2)
+    2. Advanced anomaly analysis — advanced ensemble + regime + dynamic 7-9 models (Phase 2)
   3. 5-day anomaly forecast    — ARIMA on ensemble_score series
   4. Historical anomaly events — top anomaly windows from scores_all.parquet
   5. Regime timeline          — HMM market state history (Phase 2)
@@ -42,6 +42,15 @@ from models import (
     ensemble_score, risk_label,
 )
 from features import ASSETS, load_all_features
+
+
+def bubble_label(score: float) -> str:
+    """Simple and explainable bubble classification from bubble_score (% above 200-DMA)."""
+    if score < 10:
+        return "Normal"
+    if score <= 25:
+        return "Overextended"
+    return "Extreme Overextension"
 
 
 # ── 1. Current Analysis ────────────────────────────────────────────────────────
@@ -82,11 +91,14 @@ def current_analysis(asset: str) -> dict:
             prev_feat = feat.loc[common[-2]] if len(common) >= 2 else last_feat
             price      = float(last_feat["Close"])
             prev_price = float(prev_feat["Close"])
+            bubble_val = float(last_feat.get("bubble_score", 0.0)) if pd.notna(last_feat.get("bubble_score", 0.0)) else 0.0
             result["price"]            = round(price, 2)
             result["price_change_pct"] = round((price / prev_price - 1) * 100, 3)
             result["zscore"]           = round(float(last_feat["zscore_20"]), 4)
             result["volatility"]       = round(float(last_feat["vol_30"]), 4)
             result["drawdown"]         = round(float(last_feat["drawdown"]), 4)
+            result["bubble_score"]     = round(bubble_val, 4)
+            result["bubble_label"]     = bubble_label(bubble_val)
 
     return result
 
@@ -95,7 +107,7 @@ def current_analysis(asset: str) -> dict:
 def advanced_current_analysis(asset: str) -> dict:
     """
     Return today's advanced model scores + regime state.
-    Includes all 7 model scores (4 baseline + 3 advanced) + both ensembles.
+    Includes baseline + advanced scores with optional VAE/AT (dynamic 7-9 total).
     """
     scores_path   = MODELS_DIR / asset / "scores_all.parquet"
     features_path = DATA_DIR   / f"{asset}_features.parquet"
@@ -109,6 +121,24 @@ def advanced_current_analysis(asset: str) -> dict:
     adv_ens = float(latest.get("adv_ensemble", latest["ensemble_score"]))
     adv_prev = float(prev.get("adv_ensemble", prev["ensemble_score"]))
 
+    model_scores = {
+        # Baseline (4)
+        "zscore":  round(float(latest["zscore_score"]) * 100, 2),
+        "iforest": round(float(latest["iforest_score"]) * 100, 2),
+        "lstm":    round(float(latest["lstm_score"]) * 100, 2),
+        "prophet": round(float(latest["prophet_score"]) * 100, 2),
+        # Advanced (3)
+        "xgb":     round(float(latest.get("xgb_score", 0)), 2),
+        "hmm":     round(float(latest.get("hmm_score", 0)), 2),
+        "tcn":     round(float(latest.get("tcn_score", 0)), 2),
+    }
+
+    # Optional advanced models (Phase 3+): include only when present in score parquet.
+    if "vae_score" in latest.index and pd.notna(latest.get("vae_score")):
+        model_scores["vae"] = round(float(latest.get("vae_score", 0)), 2)
+    if "at_score" in latest.index and pd.notna(latest.get("at_score")):
+        model_scores["at"] = round(float(latest.get("at_score", 0)), 2)
+
     result = {
         "asset":              asset,
         "date":               str(df.index[-1].date()),
@@ -117,17 +147,9 @@ def advanced_current_analysis(asset: str) -> dict:
         "score_delta":        round(adv_ens - adv_prev, 2),
         "risk_label":         risk_label(adv_ens),
         "current_regime":     str(latest.get("hmm_regime", "unknown")),
-        "model_scores": {
-            # Baseline (4)
-            "zscore":  round(float(latest["zscore_score"]) * 100, 2),
-            "iforest": round(float(latest["iforest_score"]) * 100, 2),
-            "lstm":    round(float(latest["lstm_score"]) * 100, 2),
-            "prophet": round(float(latest["prophet_score"]) * 100, 2),
-            # Advanced (3)
-            "xgb":     round(float(latest.get("xgb_score", 0)), 2),
-            "hmm":     round(float(latest.get("hmm_score", 0)), 2),
-            "tcn":     round(float(latest.get("tcn_score", 0)), 2),
-        },
+        "model_scores":       model_scores,
+        "model_count":        len(model_scores),
+        "models_available":   list(model_scores.keys()),
     }
 
     # Enrich with price and feature data if available
@@ -140,11 +162,14 @@ def advanced_current_analysis(asset: str) -> dict:
             prev_feat = feat.loc[common[-2]] if len(common) >= 2 else last_feat
             price      = float(last_feat["Close"])
             prev_price = float(prev_feat["Close"])
+            bubble_val = float(last_feat.get("bubble_score", 0.0)) if pd.notna(last_feat.get("bubble_score", 0.0)) else 0.0
             result["price"]            = round(price, 2)
             result["price_change_pct"] = round((price / prev_price - 1) * 100, 3)
             result["zscore"]           = round(float(last_feat["zscore_20"]), 4)
             result["volatility"]       = round(float(last_feat["vol_30"]), 4)
             result["drawdown"]         = round(float(last_feat["drawdown"]), 4)
+            result["bubble_score"]     = round(bubble_val, 4)
+            result["bubble_label"]     = bubble_label(bubble_val)
 
     return result
 
@@ -294,12 +319,12 @@ def historical_anomalies(asset: str, top_n: int = 20,
         if len(events) >= top_n:
             break
 
-    # Build chart_data — merge scores with price/vol/drawdown features
+    # Build chart_data — merge scores with price/vol/drawdown/bubble features
     chart_data = []
     if features_path.exists():
         feat = pd.read_parquet(features_path)
         feat.index = pd.to_datetime(feat.index)
-        merged = df.join(feat[["Close", "vol_30", "drawdown"]], how="left")
+        merged = df.join(feat[["Close", "vol_30", "drawdown", "bubble_score"]], how="left")
         for date, row in merged.iterrows():
             chart_data.append({
                 "date":           str(date.date()),
@@ -307,6 +332,7 @@ def historical_anomalies(asset: str, top_n: int = 20,
                 "ensemble_score": round(float(row["ensemble_score"]), 2),
                 "vol_30":         round(float(row["vol_30"]),         4) if pd.notna(row.get("vol_30")) else None,
                 "drawdown":       round(float(row["drawdown"]),       4) if pd.notna(row.get("drawdown")) else None,
+                "bubble_score":   round(float(row["bubble_score"]),   4) if pd.notna(row.get("bubble_score")) else None,
                 "is_anomaly":     bool(row["ensemble_score"] >= threshold),
             })
     else:
@@ -317,6 +343,7 @@ def historical_anomalies(asset: str, top_n: int = 20,
                 "ensemble_score": round(float(row["ensemble_score"]), 2),
                 "vol_30":         None,
                 "drawdown":       None,
+                "bubble_score":   None,
                 "is_anomaly":     bool(row["ensemble_score"] >= threshold),
             })
 

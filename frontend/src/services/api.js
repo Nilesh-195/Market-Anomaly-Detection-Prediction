@@ -185,3 +185,72 @@ export async function fetchCompareTiers(ticker) {
   const { data } = await client.get(`/anomaly/compare-tiers/${ticker}`)
   return data
 }
+
+export async function fetchCrashEvents(asset, fromDate, toDate) {
+  const params = {}
+  if (asset) params.asset = asset
+  if (fromDate) params.from_date = fromDate
+  if (toDate) params.to_date = toDate
+
+  const { data } = await client.get('/events/crashes', { params })
+  return data
+}
+
+export async function fetchCrashLabels() {
+  const { data } = await client.get('/anomaly/crash-labels')
+  return data
+}
+
+export async function fetchAnomalyMetrics(ticker, threshold = 60, model = 'ensemble_score', windowDays = 7) {
+  const { data } = await client.get(`/anomaly/metrics/${ticker}`, {
+    params: {
+      threshold,
+      model,
+      window_days: windowDays,
+    },
+  })
+  return data
+}
+
+export async function fetchThresholdAnalysis(
+  ticker,
+  {
+    model = 'ensemble_score',
+    minThreshold = 40,
+    maxThreshold = 80,
+    step = 2,
+    costFp = 1,
+    costFn = 5,
+    windowDays = 7,
+  } = {}
+) {
+  const { data } = await client.get(`/anomaly/threshold-analysis/${ticker}`, {
+    params: {
+      model,
+      min_threshold: minThreshold,
+      max_threshold: maxThreshold,
+      step,
+      cost_fp: costFp,
+      cost_fn: costFn,
+      window_days: windowDays,
+    },
+  })
+  return data
+}
+
+export async function fetchFalsePositives(ticker, threshold = 60, topN = 40, model = 'ensemble_score', windowDays = 7) {
+  const { data } = await client.get(`/anomaly/false-positives/${ticker}`, {
+    params: {
+      threshold,
+      top_n: topN,
+      model,
+      window_days: windowDays,
+    },
+  })
+  return data
+}
+
+export async function fetchBubbleRisk(ticker) {
+  const { data } = await client.get(`/anomaly/bubble-risk/${ticker}`)
+  return data
+}
