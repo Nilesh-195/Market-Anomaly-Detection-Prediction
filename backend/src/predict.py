@@ -53,6 +53,25 @@ def bubble_label(score: float) -> str:
     return "Extreme Overextension"
 
 
+def _extract_optional_score(row: pd.Series, candidates: list[str], scale: float = 1.0) -> tuple[float | None, str | None]:
+    """Return first available numeric score from candidate columns.
+
+    This keeps API responses stable even if parquet schema names vary slightly
+    across training runs.
+    """
+    for col in candidates:
+        if col not in row.index:
+            continue
+        raw = row.get(col)
+        if pd.isna(raw):
+            continue
+        try:
+            return round(float(raw) * scale, 2), col
+        except Exception:
+            continue
+    return None, None
+
+
 # ── 1. Current Analysis ────────────────────────────────────────────────────────
 def current_analysis(asset: str) -> dict:
     """Return today's anomaly scores + price/vol/zscore for the asset."""
@@ -72,6 +91,8 @@ def current_analysis(asset: str) -> dict:
         "ensemble_score": round(ens, 2),
         "risk_label":     risk_label(ens),
         "score_delta":    round(ens - ens_prev, 2),
+        "bubble_score":   None,
+        "bubble_label":   "N/A",
         "model_scores": {
             "zscore":  round(float(latest["zscore_score"]) * 100, 2),
             "iforest": round(float(latest["iforest_score"]) * 100, 2),
@@ -107,7 +128,12 @@ def current_analysis(asset: str) -> dict:
 def advanced_current_analysis(asset: str) -> dict:
     """
     Return today's advanced model scores + regime state.
-    Includes baseline + advanced scores with optional VAE/AT (dynamic 7-9 total).
+
+    Canonical response contract is 9 model keys:
+      zscore, iforest, lstm, prophet, xgb, hmm, tcn, vae, at
+
+    If a model column is unavailable in parquet, its value is returned as None
+    and listed in `missing_models`.
     """
     scores_path   = MODELS_DIR / asset / "scores_all.parquet"
     features_path = DATA_DIR   / f"{asset}_features.parquet"
@@ -121,23 +147,28 @@ def advanced_current_analysis(asset: str) -> dict:
     adv_ens = float(latest.get("adv_ensemble", latest["ensemble_score"]))
     adv_prev = float(prev.get("adv_ensemble", prev["ensemble_score"]))
 
-    model_scores = {
-        # Baseline (4)
-        "zscore":  round(float(latest["zscore_score"]) * 100, 2),
-        "iforest": round(float(latest["iforest_score"]) * 100, 2),
-        "lstm":    round(float(latest["lstm_score"]) * 100, 2),
-        "prophet": round(float(latest["prophet_score"]) * 100, 2),
-        # Advanced (3)
-        "xgb":     round(float(latest.get("xgb_score", 0)), 2),
-        "hmm":     round(float(latest.get("hmm_score", 0)), 2),
-        "tcn":     round(float(latest.get("tcn_score", 0)), 2),
-    }
+    model_specs = [
+        ("zscore", ["zscore_score"], 100.0),
+        ("iforest", ["iforest_score"], 100.0),
+        ("lstm", ["lstm_score"], 100.0),
+        ("prophet", ["prophet_score"], 100.0),
+        ("xgb", ["xgb_score"], 1.0),
+        ("hmm", ["hmm_score"], 1.0),
+        ("tcn", ["tcn_score"], 1.0),
+        ("vae", ["vae_score", "vae_anomaly_score"], 1.0),
+        ("at", ["at_score", "anomaly_transformer_score"], 1.0),
+    ]
 
-    # Optional advanced models (Phase 3+): include only when present in score parquet.
-    if "vae_score" in latest.index and pd.notna(latest.get("vae_score")):
-        model_scores["vae"] = round(float(latest.get("vae_score", 0)), 2)
-    if "at_score" in latest.index and pd.notna(latest.get("at_score")):
-        model_scores["at"] = round(float(latest.get("at_score", 0)), 2)
+    model_scores = {}
+    source_columns = {}
+    for model_name, candidates, scale in model_specs:
+        value, src_col = _extract_optional_score(latest, candidates, scale=scale)
+        model_scores[model_name] = value
+        if src_col:
+            source_columns[model_name] = src_col
+
+    available_models = [k for k, v in model_scores.items() if v is not None]
+    missing_models = [k for k, v in model_scores.items() if v is None]
 
     result = {
         "asset":              asset,
@@ -147,9 +178,14 @@ def advanced_current_analysis(asset: str) -> dict:
         "score_delta":        round(adv_ens - adv_prev, 2),
         "risk_label":         risk_label(adv_ens),
         "current_regime":     str(latest.get("hmm_regime", "unknown")),
+        "bubble_score":       None,
+        "bubble_label":       "N/A",
         "model_scores":       model_scores,
-        "model_count":        len(model_scores),
-        "models_available":   list(model_scores.keys()),
+        "model_count":        len(available_models),
+        "expected_model_count": 9,
+        "models_available":   available_models,
+        "missing_models":     missing_models,
+        "model_score_columns": source_columns,
     }
 
     # Enrich with price and feature data if available

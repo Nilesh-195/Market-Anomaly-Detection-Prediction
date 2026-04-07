@@ -2,7 +2,7 @@
 main.py — FastAPI backend for Time Series Forecasting & Anomaly Detection
 ===========================================================================
 PRIMARY: Stock Price Forecasting using classical TSFA methods
-BONUS: Market Anomaly Detection (Phase 2: dynamic 7-9 models with advanced ensemble)
+BONUS: Market Anomaly Detection (Phase 2: 9-model advanced ensemble)
 
 FORECASTING ENDPOINTS:
   GET  /forecast/price/{asset}           → Price forecast (best method)
@@ -21,8 +21,8 @@ ANOMALY DETECTION ENDPOINTS:
     GET  /anomaly/forecast/{asset}       → Anomaly score forecast
     GET  /anomaly/historical/{asset}     → Historical anomaly events
     GET  /anomaly/comparison/{asset}     → Per-model anomaly stats
-    Advanced (Phase 2 - 7-9 models):
-        GET  /anomaly/advanced/{asset}       → Dynamic 7-9 models + advanced ensemble
+    Advanced (Phase 2 - 9 models):
+        GET  /anomaly/advanced/{asset}       → 9-model advanced view + ensemble
     GET  /anomaly/regime/{asset}         → HMM market regime timeline
     GET  /anomaly/compare-tiers/{asset}  → Baseline vs Advanced comparison
 
@@ -91,10 +91,9 @@ app = FastAPI(
         "- Cross-validation and method comparison\n"
         "- Prediction intervals with 95% confidence bands\n\n"
         "**BONUS FEATURES (Phase 2 Upgraded):**\n"
-        "- Market anomaly detection with dynamic 7-9 models:\n"
+        "- Market anomaly detection with 9-model advanced view:\n"
         "  * Baseline: Z-Score, Isolation Forest, LSTM, Prophet\n"
-        "  * Advanced: XGBoost (supervised), HMM (regime), TCN (temporal)\n"
-        "  * Optional (if available): VAE, Anomaly Transformer\n"
+        "  * Advanced: XGBoost (supervised), HMM (regime), TCN (temporal), VAE, Anomaly Transformer\n"
         "- Market regime detection (bull/bear/crisis)\n"
         "- Historical crash event analysis (24 labeled events)\n"
         "- Advanced ensemble with macro features"
@@ -165,6 +164,7 @@ def health():
             "forecasting": "/docs#/Forecasting",
             "anomaly_detection": "/docs#/Anomaly%20Detection",
             "general": "/docs#/General",
+            "major_events": "/events/crashes",
         },
     }
 
@@ -248,6 +248,8 @@ def get_summary():
 def get_crash_events(asset: str = None, from_date: str = None, to_date: str = None):
     """
     Return labeled major crash events from crash_labels.json.
+
+    Used by frontend major-event markers and event timeline widgets.
 
     Optional filters:
     - asset: keep only events that affected this asset
@@ -931,8 +933,9 @@ def get_current_anomaly(asset: str):
     """
     Latest anomaly score and risk assessment.
 
-    Returns ensemble anomaly score (0-100) with risk label and
-    per-model breakdown (Z-Score, Isolation Forest, LSTM, Prophet).
+    Returns ensemble anomaly score (0-100) with risk label,
+    per-model breakdown (Z-Score, Isolation Forest, LSTM, Prophet),
+    and market-context fields including bubble_score and bubble_label.
     """
     a = _check_asset(asset)
     try:
@@ -1023,7 +1026,7 @@ def get_anomaly_evaluation():
     Full anomaly detection evaluation report.
 
     Returns Precision/Recall/F1/AUC metrics for all models across
-    all assets, evaluated against 13 labeled crash events.
+    all assets, evaluated against 24 labeled crash events.
     """
     report_path = ROOT_DIR / "backend" / "models" / "evaluation_report.json"
     if not report_path.exists():
@@ -1146,16 +1149,17 @@ def get_bubble_risk(asset: str):
 @app.get("/anomaly/advanced/{asset}", tags=["Anomaly Detection - Advanced"])
 def get_advanced_anomaly(asset: str):
     """
-    Advanced anomaly analysis with 7-9 models.
+    Advanced anomaly analysis with canonical 9-model output.
 
     Returns:
-    - 7-9 model scores (4 baseline + 3 advanced + optional VAE/AT)
+    - 9 model score keys (4 baseline + 5 advanced)
+      Missing model values are returned as null and listed in missing_models
     - Baseline ensemble vs Advanced ensemble
     - Current market regime (bull/bear/crisis)
     - Risk assessment using advanced models
 
-    Phase 2 addition: XGBoost (supervised), HMM (regime), TCN (deep temporal)
-    Optional scores are included when present in score parquet columns.
+    Phase 2 addition: XGBoost (supervised), HMM (regime), TCN,
+    VAE, and Anomaly Transformer.
     """
     a = _check_asset(asset)
     try:
@@ -1189,7 +1193,7 @@ def get_regime_timeline(asset: str):
 @app.get("/anomaly/compare-tiers/{asset}", tags=["Anomaly Detection - Advanced"])
 def compare_model_tiers(asset: str):
     """
-    Compare baseline (4 models) vs advanced (7-9 models) ensemble.
+    Compare baseline (4 models) vs advanced (9-model contract) ensemble.
 
     Returns side-by-side comparison:
     - Current baseline ensemble score
