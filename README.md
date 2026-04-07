@@ -19,8 +19,8 @@
 |--------|-------|
 | **Assets Covered** | 6 financial assets (S&P 500, VIX, Bitcoin, Gold, NASDAQ, Tesla) |
 | **Historical Data** | 2010–2026 (~4,000 trading days per asset) |
-| **Labelled Events** | 24 major market crashes with ±7 day detection windows |
-| **Anomaly Detection** | 9 models (4 baseline + 5 advanced) + 2-tier ensemble approach |
+| **Labelled Events** | 24 major market crashes with ±7 day detection windows + event tracking API |
+| **Anomaly Detection** | 7–9 models (4 baseline + 5 advanced, dynamic based on availability) + 2-tier ensemble approach |
 | **Anomaly Forecasting Modes** ⭐ | 4 modes (Ensemble, Advanced, DL Composite, Hybrid) × 3 methods (ARIMA, ETS, Hybrid blend) |
 | **Forecasting Methods** | 10+ approaches: naive baselines, ARIMA/SARIMA, VAR, deep learning (LSTM, Transformer), XGBoost |
 | **Ensemble Performance** | 0.74 average ROC-AUC (0.84 S&P 500, 0.83 VIX, 0.80 NASDAQ) |
@@ -139,6 +139,8 @@ Final Score Range: 0 – 100  (normalized)
 - Dual-tier ensemble: 4-model baseline (Z-Score, Isolation Forest, LSTM AE, Prophet) + 5-model advanced (XGBoost, HMM, TCN, VAE, Anomaly Transformer)
 - Market regime classification (bull/bear/crisis) via HMM
 - 24 labelled crash events with ±7 trading day detection window
+- Bubble score analysis: deviation of price from 200-day SMA (normal/overextended/extreme)
+- Crash event tracking API: `/events/crashes` with asset and date filtering for backtesting and research
 - SHAP model interpretability and baseline/advanced comparison
 
 **Multi-Mode Anomaly Forecasting** ⭐ *NEW*
@@ -340,12 +342,19 @@ cd frontend && npm install && npm run dev
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/anomaly/current/{asset}` | Latest baseline ensemble score with per-model breakdown |
-| `GET` | `/anomaly/advanced/{asset}` | All 9 models + both ensemble scores |
+| `GET` | `/anomaly/current/{asset}` | Latest baseline ensemble score with per-model breakdown + bubble_score & bubble_label |
+| `GET` | `/anomaly/advanced/{asset}` | 7–9 models (dynamic based on availability) + both ensemble scores + bubble fields |
 | `GET` | `/anomaly/regime/{asset}` | HMM market regime timeline (bull/bear/crisis) |
-| `GET` | `/anomaly/historical/{asset}` | Historical anomaly events (clustered) |
+| `GET` | `/anomaly/historical/{asset}?days=120` | Historical anomaly events with crash_events overlay, bubble_score in chart data |
 | `GET` | `/anomaly/comparison/{asset}` | Per-model statistics and correlation matrix |
 | `GET` | `/anomaly/compare-tiers/{asset}` | Baseline vs advanced ensemble comparison |
+
+### Crash Events Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/events/crashes?asset=SP500&from_date=2020-01-01&to_date=2026-12-31` | Query labelled market crash events with optional asset and date range filters |
+| `GET` | `/anomaly/crash-labels?asset=SP500&from_date=2020-01-01&to_date=2026-12-31` | **Alias** — identical to `/events/crashes` for backward compatibility |
 
 ### Example Requests
 
@@ -454,7 +463,7 @@ curl "http://localhost:8000/anomaly/forecast/NASDAQ?days=10&mode=advanced&method
 ```
 
 ```bash
-# Get advanced anomaly score for Bitcoin (all 9 models)
+# Get advanced anomaly score for Bitcoin (7–9 models depending on availability)
 curl http://localhost:8000/anomaly/advanced/BTC
 ```
 
@@ -462,8 +471,12 @@ curl http://localhost:8000/anomaly/advanced/BTC
 {
   "asset": "BTC",
   "date": "2026-04-04",
+  "bubble_score": 12.3,
+  "bubble_label": "Overextended",
   "adv_ensemble_score": 58.3,
   "risk_label": "Elevated",
+  "model_count": 9,
+  "models_available": ["zscore", "iforest", "lstm", "prophet", "xgb", "hmm", "tcn", "vae", "at"],
   "model_scores": {
     "zscore": 18.2, "iforest": 35.6,
     "lstm": 52.3,   "prophet": 38.9,
@@ -471,6 +484,62 @@ curl http://localhost:8000/anomaly/advanced/BTC
     "tcn": 55.7,    "vae": 49.2,
     "at": 67.4
   }
+}
+```
+
+```bash
+# Query crash events for S&P 500 in 2020
+curl "http://localhost:8000/events/crashes?asset=SP500&from_date=2020-01-01&to_date=2020-12-31"
+```
+
+```json
+{
+  "total_events": 2,
+  "events": [
+    {
+      "date": "2020-02-24",
+      "event": "COVID-19 First Wave",
+      "impact": "Extreme"
+    },
+    {
+      "date": "2020-03-16",
+      "event": "COVID-19 Crash Peak",
+      "impact": "Extreme"
+    }
+  ]
+}
+```
+
+```bash
+# Get 120-day historical anomalies for S&P 500 with crash events overlay
+curl "http://localhost:8000/anomaly/historical/SP500?days=120"
+```
+
+```json
+{
+  "asset": "SP500",
+  "chart_data": [
+    {
+      "date": "2026-01-01",
+      "ensemble_score": 42.3,
+      "bubble_score": 8.2,
+      "adv_ensemble_score": 45.1
+    },
+    {
+      "date": "2026-01-02",
+      "ensemble_score": 39.8,
+      "bubble_score": 7.5,
+      "adv_ensemble_score": 41.2
+    }
+  ],
+  "events": [...],
+  "crash_events": [
+    {
+      "date": "2025-04-07",
+      "event": "US Tariff Shock",
+      "impact": "Extreme"
+    }
+  ]
 }
 ```
 
