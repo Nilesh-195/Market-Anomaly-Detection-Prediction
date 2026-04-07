@@ -1,6 +1,6 @@
 # Market Anomaly Detection & Prediction
 
-> **A production-grade, end-to-end machine learning system for stock price forecasting and market anomaly detection across 6 financial assets. Powered by a 9-model ensemble with integrated explainability, served via a REST API, and visualized through an interactive dashboard.**
+> **Production-grade ML system for stock price forecasting and market anomaly detection across 6 financial assets, powered by a 9-model ensemble with integrated explainability, REST API, and interactive React dashboard.**
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.10-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
@@ -133,37 +133,29 @@ Final Score Range: 0 – 100  (normalized)
 
 ## Core Features
 
-### Anomaly Detection & Risk Assessment
-- **Baseline ensemble** — 4-model ensemble: Z-Score, Isolation Forest, LSTM Autoencoder, Prophet
-- **Advanced models** — 5 additional approaches: XGBoost (supervised), Hidden Markov Model, Temporal Convolutional Network, Variational Autoencoder, Anomaly Transformer (ICLR 2022)
-- **Dual-tier ensembles** — Independent baseline average and dynamic advanced weighting scheme
-- **Market regime classification** — Hidden Markov Model for bull/bear/crisis state detection
-- **Historical event labelling** — 24 major market crashes with ±7 trading day detection windows
-- **Model interpretability** — SHAP feature importance analysis for advanced anomaly scores
-- **Comparative analysis** — Side-by-side baseline vs advanced ensemble visualization
+**Anomaly Detection**
+- Dual-tier ensemble: 4-model baseline (Z-Score, Isolation Forest, LSTM AE, Prophet) + 5-model advanced (XGBoost, HMM, TCN, VAE, Anomaly Transformer)
+- Market regime classification (bull/bear/crisis) via HMM
+- 24 labelled crash events with ±7 trading day detection window
+- SHAP model interpretability and baseline/advanced comparison
 
-### Price Forecasting & Time Series Analysis
-- **Multi-method approach** — Naive baselines through advanced deep learning
-- **Automatic method selection** — Cross-validated RMSE ranking and comparison
-- **Prediction intervals** — 95% confidence intervals across all forecasting methods
-- **Stationarity testing** — Augmented Dickey-Fuller and KPSS tests with differencing recommendations
-- **Serial correlation analysis** — ACF/PACF plots with ARIMA order (p, d, q) suggestions
-- **Multi-asset modeling** — Vector Autoregression with Granger causality analysis
-- **Multivariate deep learning** — LSTM Seq2Seq and Transformer models trained on 28 features
+**Price Forecasting**
+- Multi-method ranking: naive baselines → ARIMA/SARIMA → deep learning (LSTM Seq2Seq, Transformer)
+- Automatic method selection via cross-validated RMSE
+- 95% confidence intervals on all forecasts
+- Stationarity testing, ACF/PACF analysis, VAR multi-asset modeling
 
-### User Interface & Deployment
-- **Interactive dashboard** — 5 primary pages with asset selection and real-time updates
-- **Theme support** — Light and dark mode with automatic system preference detection
-- **Interactive visualization** — Zoom, brush, and tooltip controls via Recharts
-- **Auto-refresh mechanism** — 5-minute polling for market data updates
-- **User feedback** — Toast notification system for status and error handling
-- **Responsive design** — Optimized for desktop and tablet viewing
+**User Interface**
+- Interactive React dashboard (5 pages, light/dark themes)
+- Recharts visualizations (zoom, brush, tooltips)
+- Real-time updates with 5-minute auto-refresh
+- Toast notifications and responsive design
 
 ---
 
 ## Machine Learning Models
 
-### Anomaly Detection — Baseline Tier
+### Anomaly Detection — Baseline Tier (4 models)
 
 | Model | Library | Architecture | Key Parameters |
 |-------|---------|--------------|-----------------|
@@ -172,7 +164,7 @@ Final Score Range: 0 – 100  (normalized)
 | **LSTM Autoencoder** | PyTorch 2.10 | Encoder 15→64→8, Decoder 8→64→15 | 30-day window, MSE reconstruction loss |
 | **Prophet** | Facebook Prophet | Time series decomposition + residuals | Pre-2020 training, threshold = 3σ |
 
-### Anomaly Detection — Advanced Tier
+### Anomaly Detection — Advanced Tier (5 models)
 
 | Model | Library | Architecture | Key Parameters |
 |-------|---------|--------------|-----------------|
@@ -190,17 +182,17 @@ Final Score Range: 0 – 100  (normalized)
 | **Exponential Smoothing** | SES, Holt's Linear, Damped Trend, Holt-Winters | statsmodels | Adaptive trend and seasonality |
 | **ARIMA Family** | ARIMA, SARIMA | statsmodels with auto_arima | Automatic order selection (p, d, q) |
 | **Multivariate** | Vector Autoregression (VAR) | statsmodels | 3-asset co-movement, Granger causality |
-| **Deep Learning** | LSTM Seq2Seq | PyTorch 2.10 | 28-feature multivariate inputs, encoder-decoder |
-| **Deep Learning** | Temporal Transformer** | PyTorch 2.10 | Multi-head attention, positional encoding |
-| **Gradient Boosting** | XGBoost Regressor | xgboost 2.1 | Lagged features, cyclic hour/month encoding |
+| **Deep Learning** | LSTM Seq2Seq | PyTorch 2.10 | Encoder-decoder, 28 multivariate features |
+| **Deep Learning** | Transformer | PyTorch 2.10 | Multi-head attention, positional encoding |
+| **Gradient Boosting** | XGBoost Regressor | xgboost 2.1 | Lagged features with cyclic encodings |
 
-> **Note:** Deep learning models (LSTM Seq2Seq, Transformer) incorporate the 9-model anomaly ensemble score as the 28th feature, enabling direct coupling between anomaly detection and price forecasting.
+> **Note:** Deep learning models augment these 15 features with the ensemble anomaly score to create a 28-dimensional input vector that jointly models market structure and anomaly dynamics.
 
 ---
 
 ## Feature Engineering
 
-The system extracts 15 hand-crafted features per asset, capturing market microstructure, trend, volatility, and risk dynamics:
+15 hand-crafted features per asset capture market microstructure, trend, volatility, and risk dynamics:
 
 | Feature | Category | Description |
 |---------|----------|-------------|
@@ -217,7 +209,7 @@ The system extracts 15 hand-crafted features per asset, capturing market microst
 | `vwap_deviation` | Volume | Price deviation from Volume-Weighted Average Price |
 | `atr_ratio` | Volatility | Average True Range to price ratio |
 
-**Multivariate Feature Set:** Deep learning models (LSTM Seq2Seq, Transformer) augment these 15 base features with the 9-model ensemble anomaly score to create a 28-dimensional input vector that jointly models market structure and anomaly dynamics.
+**Multivariate extension:** Deep learning models augment these 15 features with the ensemble anomaly score (28-dimensional vector) to jointly model market structure and anomaly dynamics.
 
 ---
 
@@ -226,62 +218,31 @@ The system extracts 15 hand-crafted features per asset, capturing market microst
 ```
 Market_Anomaly_Detection_Prediction/
 ├── backend/
-│   ├── api/
-│   │   └── main.py                          # FastAPI v2.1.0 — 20+ REST endpoints
-│   ├── data/
-│   │   ├── raw/                             # 6 assets × parquet (OHLCV, 2010–2026)
-│   │   ├── processed/                       # 6 assets × feature parquet (15 features)
-│   │   └── crash_labels.json                # 24 labelled market crash events
-│   ├── models/                              # Trained artifacts (git-ignored)
-│   │   ├── evaluation_report.json           # Complete per-model per-asset metrics
-│   │   ├── evaluation_summary.csv           # Human-readable metrics table
-│   │   └── <ASSET>/                        # Per-asset model collection
-│   │       └── [9 trained models + metadata + ensemble scores]
-│   ├── notebooks/
-│   │   ├── 01_eda.ipynb                    # EDA: data exploration and visualization
-│   │   ├── 02_time_series_forecasting_analysis.ipynb  # Forecasting analysis
-│   │   └── 03_train_and_evaluate.ipynb     # ★ Unified training + evaluation notebook
+│   ├── api/main.py                          # FastAPI server (20+ endpoints)
+│   ├── data/{raw,processed}                 # OHLCV + engineered features
+│   ├── models/
+│   │   ├── evaluation_{report.json,summary.csv}
+│   │   └── {SP500,NASDAQ,BTC,GOLD,VIX,TESLA}/  # 9 models per asset
+│   ├── notebooks/01_eda.ipynb .. 03_train_and_evaluate.ipynb ★
 │   ├── src/
-│   │   ├── data_loader.py                  # yfinance download + crash label management
-│   │   ├── features.py                     # 15-feature engineering pipeline
-│   │   ├── models.py                       # Baseline anomaly models + ensemble
-│   │   ├── advanced_models.py              # XGBoost, HMM, TCN
-│   │   ├── vae_model.py                    # LSTM Variational Autoencoder
-│   │   ├── anomaly_transformer.py          # Anomaly Transformer (ICLR 2022)
-│   │   ├── dl_models.py                    # LSTM Seq2Seq & Transformer architectures
-│   │   ├── gb_models.py                    # XGBoost price regressor
-│   │   ├── predict.py                      # Inference — current / forecast / history
-│   │   ├── stationarity.py                 # ADF & KPSS tests
-│   │   ├── acf_pacf_analysis.py            # ACF/PACF + ARIMA order suggestion
-│   │   ├── naive_methods.py                # Mean, Naïve, Seasonal Naïve, Drift
-│   │   ├── exponential_smoothing.py        # SES, Holt, Holt-Winters
-│   │   ├── arima_models.py                 # ARIMA / SARIMA
-│   │   ├── var_model.py                    # Multi-asset VAR + Granger causality
-│   │   └── forecast_evaluation.py          # Cross-validation + method ranking
+│   │   ├── data_loader.py, features.py      # Data pipeline
+│   │   ├── models.py, advanced_models.py    # Anomaly detection
+│   │   ├── {vae_model,anomaly_transformer}.py  # Deep learning
+│   │   ├── {dl_models,gb_models}.py         # Forecasting
+│   │   ├── {arima_models,var_model}.py      # Time series
+│   │   └── {stationarity,acf_pacf_analysis,predict}.py
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   │   ├── App.jsx                         # Root — routing + state management
-│   │   ├── index.css                       # Global design system (light/dark tokens)
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx               # Overview — ensemble gauge + sparklines
-│   │   │   ├── Forecast.jsx                # Price forecast with method selector
-│   │   │   ├── Historical.jsx              # Crash event timeline
-│   │   │   ├── Regime.jsx                  # HMM market regime visualisation
-│   │   │   └── AdvancedAnomaly.jsx         # 9-model anomaly panel
-│   │   ├── components/
-│   │   │   ├── layout/                     # Sidebar, Navbar, Layout shell
-│   │   │   └── ui/                         # Toast, Spinner, Card, Badge, Skeleton
-│   │   ├── hooks/
-│   │   │   ├── useMarketData.js            # Unified data-fetching hook
-│   │   │   └── useAutoRefresh.js           # 5-minute polling hook
-│   │   ├── services/                       # Axios API service layer
-│   │   ├── constants/                      # Asset list, colour tokens
-│   │   └── utils/                          # Formatters, helpers
-│   ├── package.json
-│   └── vite.config.js
-├── logs/
-│   └── training.log
+│   │   ├── App.jsx, main.jsx                # Root entry
+│   │   ├── index.css                        # Tokensystem
+│   │   ├── pages/                           # Dashboard, Forecast, Historical, Regime, AdvancedAnomaly
+│   │   ├── components/                      # Layout, UI, charts
+│   │   ├── hooks/                           # useMarketData, useAutoRefresh
+│   │   ├── services/, constants/, utils/    # API, config, helpers
+│   │   └── assets/                          # Icons, images
+│   └── {package.json,vite.config.js,tailwind.config.js}
+├── logs/training.log
 └── README.md
 ```
 
@@ -290,12 +251,11 @@ Market_Anomaly_Detection_Prediction/
 ## Getting Started
 
 ### Prerequisites
-- Python 3.11 or later
-- Node.js 18 or later
-- Git
+- Python 3.11+, Node.js 18+, Git
 
-### 1. Clone the repository and set up the Python environment
+### Installation & Setup
 
+**1. Clone and configure environment**
 ```bash
 git clone https://github.com/Nilesh-195/Market-Anomaly-Detection-Prediction.git
 cd Market-Anomaly-Detection-Prediction
@@ -305,47 +265,28 @@ source venv/bin/activate              # On Windows: venv\Scripts\activate
 pip install -r backend/requirements.txt
 ```
 
-### 2. Download market data and build features
-
+**2. Prepare data**
 ```bash
-python backend/src/data_loader.py     # Downloads 6 assets → backend/data/raw/
-python backend/src/features.py         # Builds 15 features → backend/data/processed/
+python backend/src/data_loader.py      # Download 6 assets
+python backend/src/features.py          # Engineer 15 features
 ```
 
-### 3. Train all models and run evaluation
-
-Open and execute the unified training and evaluation notebook:
-
+**3. Train models**
 ```bash
 jupyter notebook backend/notebooks/03_train_and_evaluate.ipynb
 ```
+Execute: data loading → anomaly training → DL forecasting → evaluation → results
 
-This notebook executes 7 sequential sections covering the full ML pipeline:
-
-| Section | Purpose |
-|---------|---------|
-| **Data Loading** | Reads feature parquet files for all 6 assets |
-| **Anomaly Model Training** | Trains 9 models and saves ensemble predictions |
-| **DL Forecasting Training** | Trains LSTM Seq2Seq and Transformer models |
-| **Model Evaluation** | Evaluates all models against 24 labelled crash events |
-| **Results & Analysis** | Generates metrics table and ROC-AUC heatmap |
-
-### 4. Start the API server
-
+**4. Launch API**
 ```bash
 uvicorn backend.api.main:app --reload --port 8000
-# Swagger UI documentation will be available at: http://localhost:8000/docs
+# Swagger UI: http://localhost:8000/docs
 ```
 
-### 5. Launch the React dashboard
-
+**5. Start frontend**
 ```bash
-cd frontend
-npm install
-# If backend runs on a different port, set API URL before starting dev server
-# Example: export VITE_API_BASE=http://localhost:8003
-npm run dev
-# Dashboard will be available at: http://localhost:5173
+cd frontend && npm install && npm run dev
+# Dashboard: http://localhost:5173
 ```
 
 ---
@@ -525,45 +466,32 @@ The ensemble abnormality score ranges from 0 to 100 and should be interpreted ac
 
 ## Deployment
 
-### Development Environment
+### Development Setup
 
-Current local setup for development and testing:
+| Component | Configuration |
+|-----------|---|
+| **Frontend** | Vite dev server @ `http://localhost:5173` (HMR enabled) |
+| **Backend** | Uvicorn @ `http://localhost:8000` (auto-reload, Swagger @ `/docs`) |
+| **Models** | In-memory PyTorch (54 total: 9 models × 6 assets) |
 
-```
-Frontend:
-  • Vite development server at http://localhost:5173
-  • Hot module replacement (HMR) enabled
-  • React 19 with automatic refresh
+### Production Deployment
 
-Backend:
-  • Uvicorn ASGI server at http://localhost:8000
-  • FastAPI auto-generated Swagger UI at /docs
-  • Auto-reload on code changes
-
-Models:
-  • All 9 anomaly models + 2 ensembles loaded per asset (54 total)
-  • In-memory cache for inference
-  • Unified training notebook: backend/notebooks/03_train_and_evaluate.ipynb
-```
-
-### Production Deployment Options
-
-| Component | Development | Production |
-|-----------|-------------|-----------|
-| **Frontend** | Vite dev server | AWS S3 + CloudFront CDN |
-| **Backend** | Uvicorn (single process) | Docker containerized → Kubernetes cluster |
-| **Models** | In-memory PyTorch | Redis cache + TorchServe model server |
-| **Database** | JSON files (crash labels) | PostgreSQL / TimescaleDB |
-| **Monitoring** | Local logs | Prometheus + Grafana |
+| Component | Stack |
+|-----------|---|
+| **Frontend** | AWS S3 + CloudFront CDN |
+| **Backend** | Docker → Kubernetes (auto-scaling) |
+| **Models** | Redis cache + TorchServe |
+| **Database** | PostgreSQL / TimescaleDB |
+| **Monitoring** | Prometheus + Grafana |
 
 ---
 
 ## License
 
-This project is distributed under the MIT License. See the [LICENSE](LICENSE) file for complete details.
+MIT License. See [LICENSE](LICENSE) for details.
 
 ---
 
-## About This Project
+## Overview
 
-This is a comprehensive, production-ready machine learning system that integrates market data ingestion, feature engineering, multi-model anomaly detection, price forecasting, and interactive visualization into a cohesive platform. It demonstrates best practices in end-to-end ML engineering: from raw OHLCV candle ingestion and 15-variable feature extraction, through 9-model training and dual-tier ensemble scoring, to a scalable REST API and responsive React dashboard.
+A comprehensive production-ready system demonstrating end-to-end ML engineering: from raw market data ingestion and feature engineering, through 9-model anomaly detection and price forecasting, to a scalable REST API and interactive dashboard. Designed for institutional risk monitoring and algorithmic trading research.
