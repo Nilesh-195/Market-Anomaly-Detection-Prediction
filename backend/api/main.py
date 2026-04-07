@@ -21,8 +21,8 @@ ANOMALY DETECTION ENDPOINTS:
     GET  /anomaly/forecast/{asset}       → Anomaly score forecast
     GET  /anomaly/historical/{asset}     → Historical anomaly events
     GET  /anomaly/comparison/{asset}     → Per-model anomaly stats
-    Advanced (Phase 2 - 9 models):
-        GET  /anomaly/advanced/{asset}       → 9-model advanced view + ensemble
+    Advanced (Phase 2 - 7-9 models):
+        GET  /anomaly/advanced/{asset}       → Dynamic 7-9 model view + ensemble
     GET  /anomaly/regime/{asset}         → HMM market regime timeline
     GET  /anomaly/compare-tiers/{asset}  → Baseline vs Advanced comparison
 
@@ -60,7 +60,6 @@ from features import load_all_features
 from dl_models import lstm_seq2seq_forecast, transformer_forecast
 from gb_models import xgboost_forecast  # Phase 3 DL
 from anomaly_quality import (
-    load_crash_labels,
     anomaly_metrics,
     threshold_analysis as anomaly_threshold_analysis,
     false_positive_timeline,
@@ -91,7 +90,7 @@ app = FastAPI(
         "- Cross-validation and method comparison\n"
         "- Prediction intervals with 95% confidence bands\n\n"
         "**BONUS FEATURES (Phase 2 Upgraded):**\n"
-        "- Market anomaly detection with 9-model advanced view:\n"
+        "- Market anomaly detection with dynamic 7-9 model advanced view:\n"
         "  * Baseline: Z-Score, Isolation Forest, LSTM, Prophet\n"
         "  * Advanced: XGBoost (supervised), HMM (regime), TCN (temporal), VAE, Anomaly Transformer\n"
         "- Market regime detection (bull/bear/crisis)\n"
@@ -135,6 +134,60 @@ def _format_dates(index, train_end_date=None, horizon=None):
         else:
             dates.append(str(d))
     return dates
+
+
+def _load_crash_labels_payload() -> dict:
+    labels_path = ROOT_DIR / "backend" / "data" / "crash_labels.json"
+    if not labels_path.exists():
+        raise HTTPException(status_code=500, detail="crash_labels.json not found")
+
+    try:
+        with open(labels_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        log.error(f"events/crashes read error: {e}")
+        raise HTTPException(status_code=500, detail=f"failed to read crash labels: {e}")
+
+    return payload if isinstance(payload, dict) else {}
+
+
+def _filter_crash_events(events: list[dict], asset: str | None = None, from_date: str | None = None, to_date: str | None = None) -> list[dict]:
+    filtered = events
+
+    if asset:
+        asset_upper = _check_asset(asset)
+        filtered = [e for e in filtered if asset_upper in e.get("assets_affected", [])]
+
+    start_ts = None
+    end_ts = None
+
+    if from_date:
+        try:
+            start_ts = pd.Timestamp(from_date)
+        except Exception:
+            raise HTTPException(status_code=400, detail="from_date must be ISO format YYYY-MM-DD")
+
+    if to_date:
+        try:
+            end_ts = pd.Timestamp(to_date)
+        except Exception:
+            raise HTTPException(status_code=400, detail="to_date must be ISO format YYYY-MM-DD")
+
+    if start_ts is not None or end_ts is not None:
+        ranged = []
+        for event in filtered:
+            try:
+                event_ts = pd.Timestamp(event.get("date"))
+            except Exception:
+                continue
+            if start_ts is not None and event_ts < start_ts:
+                continue
+            if end_ts is not None and event_ts > end_ts:
+                continue
+            ranged.append(event)
+        filtered = ranged
+
+    return sorted(filtered, key=lambda x: x.get("date", ""))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -255,55 +308,9 @@ def get_crash_events(asset: str = None, from_date: str = None, to_date: str = No
     - asset: keep only events that affected this asset
     - from_date / to_date: ISO date bounds (YYYY-MM-DD)
     """
-    labels_path = ROOT_DIR / "backend" / "data" / "crash_labels.json"
-    if not labels_path.exists():
-        raise HTTPException(status_code=404, detail="crash_labels.json not found")
+    payload = _load_crash_labels_payload()
+    events = _filter_crash_events(payload.get("events", []), asset=asset, from_date=from_date, to_date=to_date)
 
-    try:
-        with open(labels_path, encoding="utf-8") as f:
-            payload = json.load(f)
-    except Exception as e:
-        log.error(f"events/crashes read error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-    events = payload.get("events", [])
-
-    if asset:
-        asset_upper = asset.upper()
-        if asset_upper not in ASSETS:
-            raise HTTPException(status_code=404, detail=f"Asset '{asset}' not found. Valid assets: {ASSETS}")
-        events = [e for e in events if asset_upper in e.get("assets_affected", [])]
-
-    start_ts = None
-    end_ts = None
-
-    if from_date:
-        try:
-            start_ts = pd.Timestamp(from_date)
-        except Exception:
-            raise HTTPException(status_code=400, detail="from_date must be ISO format YYYY-MM-DD")
-
-    if to_date:
-        try:
-            end_ts = pd.Timestamp(to_date)
-        except Exception:
-            raise HTTPException(status_code=400, detail="to_date must be ISO format YYYY-MM-DD")
-
-    if start_ts is not None or end_ts is not None:
-        filtered = []
-        for event in events:
-            try:
-                event_ts = pd.Timestamp(event.get("date"))
-            except Exception:
-                continue
-            if start_ts is not None and event_ts < start_ts:
-                continue
-            if end_ts is not None and event_ts > end_ts:
-                continue
-            filtered.append(event)
-        events = filtered
-
-    events = sorted(events, key=lambda x: x.get("date", ""))
     return {
         "total_events": len(events),
         "events": events,
@@ -985,7 +992,7 @@ def get_anomaly_forecast(
 
 
 @app.get("/anomaly/historical/{asset}", tags=["Anomaly Detection"])
-def get_historical_anomalies(asset: str, top_n: int = 20, threshold: float = 60.0):
+def get_historical_anomalies(asset: str, top_n: int = 20, threshold: float = 60.0, days: int | None = None):
     """
     Historical anomaly events (market crashes).
 
@@ -995,10 +1002,13 @@ def get_historical_anomalies(asset: str, top_n: int = 20, threshold: float = 60.
     Parameters:
     - top_n: Number of events to return (default: 20)
     - threshold: Minimum anomaly score (default: 60.0)
+    - days: Optional trailing window size (e.g. 120 for last 120 rows)
     """
     a = _check_asset(asset)
+    if days is not None and days <= 0:
+        raise HTTPException(status_code=400, detail="days must be > 0")
     try:
-        return historical_anomalies(a, top_n=top_n, threshold=threshold)
+        return historical_anomalies(a, top_n=top_n, threshold=threshold, days=days)
     except Exception as e:
         log.error(f"historical_anomalies error for {a}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1037,13 +1047,9 @@ def get_anomaly_evaluation():
 
 
 @app.get("/anomaly/crash-labels", tags=["Anomaly Detection"])
-def get_crash_labels():
-    """Return labeled crash events used for objective validation overlays."""
-    try:
-        return load_crash_labels()
-    except Exception as e:
-        log.error(f"crash-labels error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+def get_crash_labels(asset: str = None, from_date: str = None, to_date: str = None):
+    """Alias of /events/crashes with identical output and filters."""
+    return get_crash_events(asset=asset, from_date=from_date, to_date=to_date)
 
 
 @app.get("/anomaly/metrics/{asset}", tags=["Anomaly Detection"])
@@ -1149,11 +1155,10 @@ def get_bubble_risk(asset: str):
 @app.get("/anomaly/advanced/{asset}", tags=["Anomaly Detection - Advanced"])
 def get_advanced_anomaly(asset: str):
     """
-    Advanced anomaly analysis with canonical 9-model output.
+    Advanced anomaly analysis with dynamic 7-9 model output.
 
     Returns:
-    - 9 model score keys (4 baseline + 5 advanced)
-      Missing model values are returned as null and listed in missing_models
+    - 7-9 model scores (4 baseline + 3 advanced + optional VAE/AT)
     - Baseline ensemble vs Advanced ensemble
     - Current market regime (bull/bear/crisis)
     - Risk assessment using advanced models
@@ -1193,7 +1198,7 @@ def get_regime_timeline(asset: str):
 @app.get("/anomaly/compare-tiers/{asset}", tags=["Anomaly Detection - Advanced"])
 def compare_model_tiers(asset: str):
     """
-    Compare baseline (4 models) vs advanced (9-model contract) ensemble.
+    Compare baseline (4 models) vs advanced (dynamic 7-9 model) ensemble.
 
     Returns side-by-side comparison:
     - Current baseline ensemble score

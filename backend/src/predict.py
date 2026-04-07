@@ -16,6 +16,7 @@ Run standalone:
 """
 
 import logging
+import json
 import pickle
 import sys
 import warnings
@@ -66,7 +67,8 @@ def _extract_optional_score(row: pd.Series, candidates: list[str], scale: float 
         if pd.isna(raw):
             continue
         try:
-            return round(float(raw) * scale, 2), col
+            val = float(np.clip(float(raw) * scale, 0.0, 100.0))
+            return round(val, 2), col
         except Exception:
             continue
     return None, None
@@ -118,7 +120,7 @@ def current_analysis(asset: str) -> dict:
             result["zscore"]           = round(float(last_feat["zscore_20"]), 4)
             result["volatility"]       = round(float(last_feat["vol_30"]), 4)
             result["drawdown"]         = round(float(last_feat["drawdown"]), 4)
-            result["bubble_score"]     = round(bubble_val, 4)
+            result["bubble_score"]     = round(bubble_val, 2)
             result["bubble_label"]     = bubble_label(bubble_val)
 
     return result
@@ -129,11 +131,7 @@ def advanced_current_analysis(asset: str) -> dict:
     """
     Return today's advanced model scores + regime state.
 
-    Canonical response contract is 9 model keys:
-      zscore, iforest, lstm, prophet, xgb, hmm, tcn, vae, at
-
-    If a model column is unavailable in parquet, its value is returned as None
-    and listed in `missing_models`.
+    Returns 7-9 model scores depending on model availability.
     """
     scores_path   = MODELS_DIR / asset / "scores_all.parquet"
     features_path = DATA_DIR   / f"{asset}_features.parquet"
@@ -160,15 +158,12 @@ def advanced_current_analysis(asset: str) -> dict:
     ]
 
     model_scores = {}
-    source_columns = {}
     for model_name, candidates, scale in model_specs:
-        value, src_col = _extract_optional_score(latest, candidates, scale=scale)
-        model_scores[model_name] = value
-        if src_col:
-            source_columns[model_name] = src_col
+        value, _ = _extract_optional_score(latest, candidates, scale=scale)
+        if value is not None:
+            model_scores[model_name] = value
 
-    available_models = [k for k, v in model_scores.items() if v is not None]
-    missing_models = [k for k, v in model_scores.items() if v is None]
+    available_models = list(model_scores.keys())
 
     result = {
         "asset":              asset,
@@ -182,10 +177,7 @@ def advanced_current_analysis(asset: str) -> dict:
         "bubble_label":       "N/A",
         "model_scores":       model_scores,
         "model_count":        len(available_models),
-        "expected_model_count": 9,
         "models_available":   available_models,
-        "missing_models":     missing_models,
-        "model_score_columns": source_columns,
     }
 
     # Enrich with price and feature data if available
@@ -204,7 +196,7 @@ def advanced_current_analysis(asset: str) -> dict:
             result["zscore"]           = round(float(last_feat["zscore_20"]), 4)
             result["volatility"]       = round(float(last_feat["vol_30"]), 4)
             result["drawdown"]         = round(float(last_feat["drawdown"]), 4)
-            result["bubble_score"]     = round(bubble_val, 4)
+            result["bubble_score"]     = round(bubble_val, 2)
             result["bubble_label"]     = bubble_label(bubble_val)
 
     return result
@@ -536,16 +528,67 @@ def forecast_anomaly(asset: str, days: int = 5, mode: str = "hybrid", method: st
 
 
 # ── 3. Historical Anomaly Events ───────────────────────────────────────────────
+def _load_crash_events_for_asset(
+    asset: str,
+    start_date: pd.Timestamp | None = None,
+    end_date: pd.Timestamp | None = None,
+) -> list[dict]:
+    labels_path = ROOT_DIR / "backend" / "data" / "crash_labels.json"
+    if not labels_path.exists():
+        log.warning("crash_labels.json not found while building historical anomalies payload")
+        return []
+
+    try:
+        with open(labels_path, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        log.warning(f"Failed to read crash labels: {e}")
+        return []
+
+    events = payload.get("events", [])
+    out = []
+    for ev in events:
+        if asset not in ev.get("assets_affected", []):
+            continue
+        try:
+            ev_ts = pd.Timestamp(ev.get("date"))
+        except Exception:
+            continue
+        if start_date is not None and ev_ts < start_date:
+            continue
+        if end_date is not None and ev_ts > end_date:
+            continue
+
+        out.append(
+            {
+                "date": str(ev_ts.date()),
+                "event": ev.get("event"),
+                "impact": ev.get("impact"),
+            }
+        )
+
+    out.sort(key=lambda x: x.get("date", ""))
+    return out
+
+
 def historical_anomalies(asset: str, top_n: int = 20,
-                          threshold: float = 60.0) -> dict:
+                          threshold: float = 60.0, days: int | None = None) -> dict:
     """Return top anomaly events + full chart_data series for the asset."""
     scores_path   = MODELS_DIR / asset / "scores_all.parquet"
     features_path = DATA_DIR   / f"{asset}_features.parquet"
 
     df = pd.read_parquet(scores_path)
     df.index = pd.to_datetime(df.index)
+    df = df.sort_index()
 
-    flagged = df[df["ensemble_score"] >= threshold]["ensemble_score"].sort_values(ascending=False)
+    if days is not None:
+        if days <= 0:
+            raise ValueError("days must be > 0")
+        df_window = df.iloc[-days:]
+    else:
+        df_window = df
+
+    flagged = df_window[df_window["ensemble_score"] >= threshold]["ensemble_score"].sort_values(ascending=False)
 
     # Cluster: keep only 1 entry per 5-day window
     events, last_date = [], None
@@ -566,7 +609,7 @@ def historical_anomalies(asset: str, top_n: int = 20,
     if features_path.exists():
         feat = pd.read_parquet(features_path)
         feat.index = pd.to_datetime(feat.index)
-        merged = df.join(feat[["Close", "vol_30", "drawdown", "bubble_score"]], how="left")
+        merged = df_window.join(feat[["Close", "vol_30", "drawdown", "bubble_score"]], how="left")
         for date, row in merged.iterrows():
             chart_data.append({
                 "date":           str(date.date()),
@@ -574,11 +617,11 @@ def historical_anomalies(asset: str, top_n: int = 20,
                 "ensemble_score": round(float(row["ensemble_score"]), 2),
                 "vol_30":         round(float(row["vol_30"]),         4) if pd.notna(row.get("vol_30")) else None,
                 "drawdown":       round(float(row["drawdown"]),       4) if pd.notna(row.get("drawdown")) else None,
-                "bubble_score":   round(float(row["bubble_score"]),   4) if pd.notna(row.get("bubble_score")) else None,
+                "bubble_score":   round(float(row["bubble_score"]),   2) if pd.notna(row.get("bubble_score")) else None,
                 "is_anomaly":     bool(row["ensemble_score"] >= threshold),
             })
     else:
-        for date, row in df.iterrows():
+        for date, row in df_window.iterrows():
             chart_data.append({
                 "date":           str(date.date()),
                 "close":          None,
@@ -589,10 +632,15 @@ def historical_anomalies(asset: str, top_n: int = 20,
                 "is_anomaly":     bool(row["ensemble_score"] >= threshold),
             })
 
+    start_ts = pd.Timestamp(chart_data[0]["date"]) if chart_data else None
+    end_ts = pd.Timestamp(chart_data[-1]["date"]) if chart_data else None
+    crash_events = _load_crash_events_for_asset(asset, start_date=start_ts, end_date=end_ts)
+
     return {
         "asset":             asset,
         "events":            events,
-        "total_anomaly_days": int((df["ensemble_score"] >= threshold).sum()),
+        "crash_events":      crash_events,
+        "total_anomaly_days": int((df_window["ensemble_score"] >= threshold).sum()),
         "chart_data":        chart_data,
     }
 
