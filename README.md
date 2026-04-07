@@ -1,6 +1,6 @@
 # Market Anomaly Detection & Prediction
 
-> **Production-grade ML system for stock price forecasting and market anomaly detection across 6 financial assets, powered by a 9-model ensemble with integrated explainability, REST API, and interactive React dashboard.**
+> **Production-grade ML system for stock price forecasting and market anomaly detection across 6 financial assets, powered by a 9-model ensemble with multi-mode anomaly forecasting, regime-adaptive blending, integrated explainability, REST API, and interactive React dashboard.** ⭐
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)](https://python.org)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.10-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org)
@@ -21,6 +21,7 @@
 | **Historical Data** | 2010–2026 (~4,000 trading days per asset) |
 | **Labelled Events** | 24 major market crashes with ±7 day detection windows |
 | **Anomaly Detection** | 9 models (4 baseline + 5 advanced) + 2-tier ensemble approach |
+| **Anomaly Forecasting Modes** ⭐ | 4 modes (Ensemble, Advanced, DL Composite, Hybrid) × 3 methods (ARIMA, ETS, Hybrid blend) |
 | **Forecasting Methods** | 10+ approaches: naive baselines, ARIMA/SARIMA, VAR, deep learning (LSTM, Transformer), XGBoost |
 | **Ensemble Performance** | 0.74 average ROC-AUC (0.84 S&P 500, 0.83 VIX, 0.80 NASDAQ) |
 | **Detection Accuracy** | 38% average crash detection rate (67% Tesla, 54% NASDAQ, 46% VIX) |
@@ -40,6 +41,7 @@
 - [Project Structure](#project-structure)
 - [Getting Started](#getting-started)
 - [API Reference](#api-reference)
+- [Multi-Mode Forecasting & Blending Logic](#multi-mode-forecasting--blending-logic-) ⭐
 - [Labelled Events](#labelled-events)
 - [Model Performance](#model-performance)
 - [Technology Stack](#technology-stack)
@@ -139,6 +141,16 @@ Final Score Range: 0 – 100  (normalized)
 - 24 labelled crash events with ±7 trading day detection window
 - SHAP model interpretability and baseline/advanced comparison
 
+**Multi-Mode Anomaly Forecasting** ⭐ *NEW*
+- 4 distinct signal sources with toggleable UI modes:
+  - **Ensemble:** Baseline 4-model average (Z-Score, IForest, LSTM AE, Prophet)
+  - **Advanced:** 9-model weighted combining all baseline + advanced models
+  - **DL Composite:** Deep learning weighted blend (0.35×LSTM + 0.30×TCN + 0.20×VAE + 0.15×Anomaly Transformer)
+  - **Hybrid:** Regime-adaptive blend of Advanced + DL (crisis: 45/55, bull: 60/40, neutral: 55/45)
+- 3 forecasting methods: ARIMA(2,1,2), ExponentialSmoothing (ETS), Hybrid blend (60% ARIMA + 40% ETS)
+- Mode comparison mini-chart: Overlay all 4 forecasts to visualize signal divergence
+- Per-forecast metadata: model sources and weights used
+
 **Price Forecasting**
 - Multi-method ranking: naive baselines → ARIMA/SARIMA → deep learning (LSTM Seq2Seq, Transformer)
 - Automatic method selection via cross-validated RMSE
@@ -147,9 +159,10 @@ Final Score Range: 0 – 100  (normalized)
 
 **User Interface**
 - Interactive React dashboard (5 pages, light/dark themes)
-- Recharts visualizations (zoom, brush, tooltips)
+- Vertically stacked layout for better readability on all screen sizes
+- Recharts visualizations (zoom, brush, tooltips, multi-mode overlay)
 - Real-time updates with 5-minute auto-refresh
-- Toast notifications and responsive design
+- Toast notifications and fully responsive design
 
 ---
 
@@ -317,11 +330,11 @@ cd frontend && npm install && npm run dev
 | `GET` | `/forecast/acf-pacf/{asset}?max_lags=40` | ACF/PACF plots with ARIMA order recommendation |
 | `GET` | `/forecast/evaluate/{asset}` | Cross-validation metrics (RMSE, MAE, MAPE) |
 
-#### Anomaly Forecasting
+#### Anomaly Forecasting (Multi-Mode) ⭐ *NEW*
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/anomaly/forecast/{asset}?days=10` | 5–30 day anomaly score forecast with CI |
+| `GET` | `/anomaly/forecast/{asset}?days=10&mode=hybrid&method=hybrid` | **Multi-mode anomaly score forecast with 95% CI.** Query parameters: `mode` ∈ {ensemble, advanced, dl, hybrid}, `method` ∈ {arima, ets, hybrid}. Default: mode=hybrid, method=hybrid. Returns forecast_points array with score, lower/upper bounds, risk_label, model_used, source_label |
 
 ### Anomaly Detection Endpoints (Real-time)
 
@@ -358,6 +371,85 @@ curl "http://localhost:8000/forecast/price/SP500?horizon=30"
     "forecast_30d": 5980.1,
     "expected_return_pct": 2.35
   }
+}
+```
+
+```bash
+# Get 10-day hybrid (regime-aware) anomaly forecast for S&P 500 with hybrid method
+curl "http://localhost:8000/anomaly/forecast/SP500?days=10&mode=hybrid&method=hybrid"
+```
+
+```json
+{
+  "asset": "SP500",
+  "forecast_mode": "hybrid",
+  "forecast_method": "hybrid",
+  "source_label": "Regime-aware blend (crisis: 45% Adv + 55% DL, bull: 60% Adv + 40% DL, else: 55% Adv + 45% DL)",
+  "model_used": ["advanced_ensemble", "dl_composite"],
+  "forecast_points": [
+    {
+      "date": "2026-04-08",
+      "score": 42.3,
+      "lower_95": 38.1,
+      "upper_95": 46.5,
+      "risk_label": "Elevated"
+    },
+    {
+      "date": "2026-04-09",
+      "score": 38.9,
+      "lower_95": 34.2,
+      "upper_95": 43.6,
+      "risk_label": "Normal"
+    }
+  ]
+}
+```
+
+```bash
+# Get 10-day DL composite mode forecast for Bitcoin with ARIMA method
+curl "http://localhost:8000/anomaly/forecast/BTC?days=10&mode=dl&method=arima"
+```
+
+```json
+{
+  "asset": "BTC",
+  "forecast_mode": "dl",
+  "forecast_method": "arima",
+  "source_label": "DL Composite: 35% LSTM + 30% TCN + 20% VAE + 15% Anomaly Transformer",
+  "model_used": ["lstm_autoencoder", "tcn_model", "vae_model", "anomaly_transformer"],
+  "forecast_points": [
+    {
+      "date": "2026-04-08",
+      "score": 52.1,
+      "lower_95": 48.3,
+      "upper_95": 55.9,
+      "risk_label": "Elevated"
+    }
+  ]
+}
+```
+
+```bash
+# Get 10-day advanced ensemble mode forecast for NASDAQ with ETS method
+curl "http://localhost:8000/anomaly/forecast/NASDAQ?days=10&mode=advanced&method=ets"
+```
+
+```json
+{
+  "asset": "NASDAQ",
+  "forecast_mode": "advanced",
+  "forecast_method": "ets",
+  "source_label": "Advanced Ensemble: All 9 models (4 baseline + 5 advanced)",
+  "model_used": ["zscore", "iforest", "lstm", "prophet", "xgb", "hmm", "tcn", "vae", "anomaly_transformer"],
+  "forecast_points": [
+    {
+      "date": "2026-04-08",
+      "score": 45.7,
+      "lower_95": 40.2,
+      "upper_95": 51.2,
+      "risk_label": "Elevated"
+    }
+  ]
 }
 ```
 
@@ -458,9 +550,91 @@ The ensemble models were evaluated against all 24 labelled crash events using a 
 
 ---
 
+## Multi-Mode Forecasting & Blending Logic ⭐ *NEW*
+
+### Mode Definitions & Mathematical Formulas
+
+#### 1. **Ensemble Mode** (Baseline)
+Uses the 4-model baseline ensemble score:
+```
+ensemble_score = (15% × Z-Score) + (25% × IForest) + (40% × LSTM AE) + (20% × Prophet)
+```
+**Use case:** Conservative baseline; good for first-pass anomaly detection.
+
+#### 2. **Advanced Mode**
+Uses all 9 anomaly models weighted by a pre-computed ensemble in the data layer:
+```
+adv_ensemble_score = weighted_average(all 9 models)
+where models = [zscore, iforest, lstm, prophet, xgb, hmm, tcn, vae, anomaly_transformer]
+```
+**Use case:** Comprehensive signal incorporating advanced models; recommended for institutional risk monitoring.
+
+#### 3. **DL Composite Mode**
+Weighted average of deep learning models only:
+```
+dl_composite = (0.35×LSTM + 0.30×TCN + 0.20×VAE + 0.15×AT) / Σ available_weights
+```
+Where:
+- LSTM = LSTM Autoencoder reconstruction score
+- TCN = Temporal Convolutional Network score
+- VAE = Variational Autoencoder score
+- AT = Anomaly Transformer score
+- Σ available_weights = sum of weights for models with valid data (enables graceful degradation)
+
+**Use case:** Pure deep learning signal; emphasizes learned hierarchical patterns.
+
+#### 4. **Hybrid Mode** (Regime-Aware) ⭐ *RECOMMENDED*
+Adaptive blend of Advanced + DL Composite based on HMM market regime:
+```
+if HMM_state == "crisis":
+    hybrid = 0.45×advanced + 0.55×dl_composite
+elif HMM_state == "bull":
+    hybrid = 0.60×advanced + 0.40×dl_composite
+else:  # bear or neutral
+    hybrid = 0.55×advanced + 0.45×dl_composite
+
+hybrid_final = clip(hybrid, 0, 100)
+```
+**Regime weights:**
+- **Crisis:** Increase DL weight (55%) as deep learning captures systemic risk better
+- **Bull:** Decrease DL weight (40%), rely more on advanced ensemble (60%)
+- **Bear/Neutral:** Balanced 55/45 split
+
+**Use case:** Production-grade signal with adaptive sensitivity to market regimes.
+
+### Forecasting Methods
+
+Each mode forecast is computed using one of 3 methods:
+
+#### 1. **ARIMA Method**
+AutoRegressive Integrated Moving Average with automatic order detection:
+```
+ARIMA(2,1,2) fitted on last 252 trading days with differencing
+Forecast: ŷₜ = μ + Σ φᵢ(yₜ₋ᵢ) + Σ θⱼ(εₜ₋ⱼ)
+```
+**Provides:** Mean forecast + 95% CI via bootstrap resampling.
+
+#### 2. **ETS Method**
+Exponential Smoothing with additive trend:
+```
+ETS(additive, trend=additive, seasonal=None)
+Smoothed_t = α·signal + (1-α)·(smoothed_{t-1} + trend_{t-1})
+```
+**Provides:** Trend-adjusted forecast + variance-based CI.
+
+#### 3. **Hybrid Method** (60% ARIMA + 40% ETS)
+Blended forecast combining both methods:
+```
+hybrid_forecast = 0.60×arima_forecast + 0.40×ets_forecast
+hybrid_ci = sqrt(0.60²×arima_var + 0.40²×ets_var)
+```
+**Use case:** Robust forecast averaging technical strength of both approaches.
+
+---
+
 ## Risk Scoring
 
-The ensemble abnormality score ranges from 0 to 100 and should be interpreted according to the following framework:
+The anomaly score ranges from 0 to 100 and should be interpreted according to the following framework. Scores are independent of forecasting mode/method but risk labels adjust based on regime:
 
 | Score Range | Status | Interpretation | Recommended Action |
 |:----------:|--------|-----------------|-------------------|
@@ -501,4 +675,4 @@ MIT License. See [LICENSE](LICENSE) for details.
 
 ## Overview
 
-A comprehensive production-ready system demonstrating end-to-end ML engineering: from raw market data ingestion and feature engineering, through 9-model anomaly detection and price forecasting, to a scalable REST API and interactive dashboard. Designed for institutional risk monitoring and algorithmic trading research.
+A comprehensive production-ready system demonstrating end-to-end ML engineering: from raw market data ingestion and feature engineering, through 9-model anomaly detection and price forecasting, to a scalable REST API and interactive dashboard with **multi-mode anomaly forecasting** (ensemble, advanced, DL composite, and regime-aware hybrid modes). Features real-time comparison overlays, regime-adaptive blending, and institutional-grade risk monitoring for algorithmic trading and quantitative research.
